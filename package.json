@@ -1,0 +1,30 @@
+{
+    "name": "data-visualizer-library", 
+    "version": "1.0.0", 
+    "description": "A simple JavaScript library for creating various charts with Chart.js and Papa Parse.",
+    "main": "data-visualizer-library.js", 
+    "scripts": {
+      "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "keywords": [
+      "data visualization",
+      "charts",
+      "chart.js",
+      "csv",
+      "data analysis"
+    ],
+    "author": "William Frank Mahunda <williamfranklyn2020@gmail.com>",
+    "license": "MIT", 
+    "dependencies": {
+      "chart.js": "^4.0.0", 
+      "papaparse": "^5.0.0" 
+    },
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/your-username/your-repo-name.git" 
+    },
+    "bugs": {
+      "url": "https://github.com/your-username/your-repo-name/issues"
+    },
+    "homepage": "https://github.com/your-username/your-repo-name#readme"
+  }

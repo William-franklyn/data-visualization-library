@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Visualization Library Example</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Data Visualization Library Example</h1>
+        <div class="input-section">
+            <label for="dataInput">Enter Numerical Data (comma-separated):</label>
+            <input type="text" id="dataInput" placeholder="e.g., 10,25,15,30,5">
+            <label for="labelInput">Enter Labels (comma-separated, optional):</label>
+            <input type="text" id="labelInput" placeholder="e.g., Jan,Feb,Mar,Apr,May">
+            <label for="chartType">Select Chart Type:</label>
+            <select id="chartType">
+                <option value="bar">Bar Chart</option>
+                <option value="line">Line Chart</option>
+                <option value="doughnut">Doughnut Chart</option>
+                <option value="polarArea">Polar Area Chart</option>
+            </select>
+            <label for="fileInput">Upload CSV File:</label>
+            <input type="file" id="fileInput" accept=".csv">
+            <button id="visualizeBtn">Visualize Data</button>
+            <button id="clearBtn">Clear Graph</button>
+        </div>
+        <div class="chart-container">
+            <canvas id="myChart"></canvas>
+            <div class="chart-controls">
+                </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
