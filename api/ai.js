@@ -5,7 +5,14 @@ module.exports = async function handler(req, res) {
 
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
-        return res.status(500).json({ error: 'API key not configured on server.' });
+        return res.status(500).json({ error: { message: 'OPENROUTER_API_KEY not set in Vercel environment variables.' } });
+    }
+
+    let body;
+    try {
+        body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    } catch (err) {
+        return res.status(400).json({ error: { message: 'Invalid JSON body.' } });
     }
 
     try {
@@ -17,12 +24,12 @@ module.exports = async function handler(req, res) {
                 'HTTP-Referer': 'https://datavz.vercel.app',
                 'X-Title': 'DataViz Studio',
             },
-            body: JSON.stringify(req.body),
+            body: JSON.stringify(body),
         });
 
         const data = await response.json();
         return res.status(response.status).json(data);
     } catch (err) {
-        return res.status(500).json({ error: err.message });
+        return res.status(500).json({ error: { message: err.message } });
     }
 }
