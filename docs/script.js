@@ -16,7 +16,7 @@ async function askAI(prompt) {
             model: AI_MODEL,
             messages: [{ role: 'user', content: prompt }],
             temperature: 0.3,
-            max_tokens: 600,
+            max_tokens: 4000,
         }),
     });
     if (!res.ok) {
@@ -27,15 +27,19 @@ async function askAI(prompt) {
     const data = await res.json();
     const msg = data.choices[0].message;
 
-    // Nemotron returns content as null and puts its output in msg.reasoning.
-    // Extract only the bullet points (lines starting with •) from the reasoning text.
+    // Nemotron reasoning model puts thinking in msg.reasoning and final answer in msg.content.
+    // With enough max_tokens, content should be populated. Fall back to extracting
+    // the last bullet block from reasoning if content is still null.
     let content = msg.content;
     if (!content) {
         const reasoningText = msg.reasoning
             || msg.reasoning_details?.map(d => d.text || d.content || '').join('\n')
             || '';
-        const bullets = reasoningText.match(/^•.+$/gm);
-        content = bullets ? bullets.join('\n') : reasoningText;
+        // Find the last group of consecutive bullet lines (the final composed answer)
+        const blocks = reasoningText.split(/\n{2,}/);
+        const lastBulletBlock = [...blocks].reverse().find(b => /^•/m.test(b));
+        const bullets = lastBulletBlock?.match(/^•.+$/gm);
+        content = bullets ? bullets.join('\n') : null;
     }
     if (!content) throw new Error('AI returned an empty response.');
     return content.trim();
