@@ -161,6 +161,12 @@
 
         #activeThemeName { font-family: var(--font-body); font-weight: 700; letter-spacing: 0.04em; }
 
+        /* ── AI ── */
+        .ai-spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin 0.7s linear infinite; flex-shrink:0; }
+        @keyframes spin { to { transform:rotate(360deg); } }
+        #aiInsightsPanel { animation: fadeIn 0.2s ease; }
+        @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+
         /* ── COLUMN SELECTOR ── */
         .col-chip { display:inline-flex; align-items:center; gap:5px; padding:4px 9px; background:var(--surface2); border:1.5px solid var(--border); border-radius:5px; font-size:0.72rem; cursor:default; }
         .col-chip .col-num { font-family:var(--font-mono); font-weight:700; color:var(--accent); }
@@ -377,6 +383,7 @@
                 </div>
             </div>
             <div class="chart-toolbar-right">
+                <button class="btn" id="aiInsightsBtn" title="Get AI insights" style="font-size:0.78rem;padding:6px 12px;gap:5px">✨ AI Insights</button>
                 <button class="btn btn-icon" id="zoomToggleBtn" title="Enable zoom">🔍</button>
                 <button class="btn btn-icon" id="tableToggleBtn" title="Toggle data table">⊞</button>
                 <button class="btn btn-icon" id="downloadBtn" title="Download as PNG">⬇</button>
@@ -393,6 +400,22 @@
                 <canvas id="myChart" style="display:none"></canvas>
             </div>
             <button class="btn" id="exitFullscreenBtn" style="display:none;position:absolute;top:14px;right:14px;z-index:10">✕ Exit</button>
+        </div>
+
+        <!-- AI Insights Panel -->
+        <div id="aiInsightsPanel" style="display:none">
+            <div class="panel" style="margin:0">
+                <div class="panel-header" style="display:flex;align-items:center;justify-content:space-between">
+                    <span>✨ AI Insights</span>
+                    <button class="btn btn-icon" id="closeInsightsBtn" title="Close" style="font-size:0.75rem;width:24px;height:24px">✕</button>
+                </div>
+                <div class="panel-body" id="aiInsightsBody" style="font-size:0.85rem;line-height:1.7;color:var(--text)">
+                    <div id="aiInsightsLoader" style="display:flex;align-items:center;gap:10px;color:var(--text-muted)">
+                        <span class="ai-spinner"></span> Analyzing your data…
+                    </div>
+                    <div id="aiInsightsText" style="display:none;white-space:pre-wrap"></div>
+                </div>
+            </div>
         </div>
 
         <div class="data-table-container" id="dataTableContainer">

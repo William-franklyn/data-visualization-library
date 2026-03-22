@@ -1,8 +1,53 @@
 /**
- * DataViz Studio — script.js (hardened rewrite)
- * Fixes: plugin registration order, zoom API, grid logic, fill toggle,
- *        rainbow null-check, resetZoom arg, CSS var timing, safe guards throughout.
+ * DataViz Studio — script.js
  */
+
+/* ── AI Config (OpenRouter) ──
+   Paste your OpenRouter API key below.
+   Get one free at https://openrouter.ai → Dashboard → API Keys
+   ⚠ Do not share this file publicly with your key inside. */
+const AI_API_KEY = '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';
+/* To use a different model: go to https://openrouter.ai/models → filter by "Free" → click a model → copy its ID */
+const AI_MODEL   = 'nvidia/nemotron-3-super-120b-a12b:free';
+const AI_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+
+async function askAI(prompt) {
+    const res = await fetch(AI_API_URL, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${AI_API_KEY}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': window.location.href,   // required by OpenRouter for browser requests
+            'X-Title': 'DataViz Studio',
+        },
+        body: JSON.stringify({
+            model: AI_MODEL,
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.3,
+            max_tokens: 600,
+        }),
+    });
+    if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        const msg = errBody?.error?.message || res.statusText;
+        throw new Error(`AI error ${res.status}: ${msg}`);
+    }
+    const data = await res.json();
+    const msg = data.choices[0].message;
+
+    // Nemotron returns content as null and puts its output in msg.reasoning.
+    // Extract only the bullet points (lines starting with •) from the reasoning text.
+    let content = msg.content;
+    if (!content) {
+        const reasoningText = msg.reasoning
+            || msg.reasoning_details?.map(d => d.text || d.content || '').join('\n')
+            || '';
+        const bullets = reasoningText.match(/^•.+$/gm);
+        content = bullets ? bullets.join('\n') : reasoningText;
+    }
+    if (!content) throw new Error('AI returned an empty response.');
+    return content.trim();
+}
 
 /* ── Wait for all scripts to be ready ── */
 window.addEventListener('load', function () {
@@ -540,7 +585,8 @@ window.addEventListener('load', function () {
             chip.innerHTML = `<span class="col-num">${i + 1}</span><span class="col-name">${h}</span>`;
             list.appendChild(chip);
         });
-        // Auto-detect numeric columns for sensible defaults
+
+        // Numeric-only fallback defaults
         const numericIdxs = headers.reduce((acc, h, i) => {
             if (rows.every(r => r[h] !== '' && !isNaN(Number(r[h])))) acc.push(i + 1);
             return acc;
@@ -548,6 +594,23 @@ window.addEventListener('load', function () {
         $('labelColInput').value = '1';
         $('dataColInput').value  = numericIdxs.length ? numericIdxs.join(', ') : '2';
         $('columnSelectorPanel').style.display = 'block';
+
+        // Ask AI to suggest better column mapping
+        const sampleRows = rows.slice(0, 3).map(r => headers.map(h => r[h]).join(', ')).join('\n');
+        const prompt =
+            `Given this CSV data, identify which column is best as a label/category axis and which columns contain numeric data worth visualizing.\n\n` +
+            `Columns: ${headers.map((h, i) => `${i + 1}: ${h}`).join(', ')}\n` +
+            `Sample rows:\n${sampleRows}\n\n` +
+            `Reply in JSON only, no explanation:\n{"labelColumn": <number>, "dataColumns": [<numbers>]}`;
+
+        askAI(prompt).then(result => {
+            try {
+                const json = JSON.parse(result.match(/\{[\s\S]*\}/)[0]);
+                if (json.labelColumn) $('labelColInput').value = json.labelColumn;
+                if (json.dataColumns?.length) $('dataColInput').value = json.dataColumns.join(', ');
+                showToast('✨ AI suggested column mapping');
+            } catch (_) { /* keep numeric fallback */ }
+        }).catch(() => { /* keep fallback silently */ });
     }
 
     // Apply column selection from CSV
@@ -616,6 +679,7 @@ window.addEventListener('load', function () {
         fileNameEl.style.display = 'none';
         $('columnSelectorPanel').style.display = 'none';
         $('columnList').innerHTML = '';
+        $('aiInsightsPanel').style.display = 'none';
         currentLabels = []; currentValues = [];
         $('myChart').style.display    = 'none';
         $('emptyState').style.display = '';
@@ -625,6 +689,51 @@ window.addEventListener('load', function () {
         $('tableToggleBtn').classList.remove('active');
         showTable = false;
         showToast('✓ Cleared!');
+    });
+
+    // ── AI Insights ──
+    $('aiInsightsBtn').addEventListener('click', async () => {
+        if (!myChartInstance || !currentLabels.length) {
+            showToast('⚠ Generate a chart first.'); return;
+        }
+
+        const panel  = $('aiInsightsPanel');
+        const loader = $('aiInsightsLoader');
+        const text   = $('aiInsightsText');
+
+        panel.style.display = 'block';
+        loader.style.display = 'flex';
+        text.style.display   = 'none';
+        text.textContent     = '';
+
+        // Build a readable summary of the data for the prompt
+        const seriesSummary = currentValues.map((vals, i) => {
+            const name = currentHeaders[i + 1] || `Series ${i + 1}`;
+            return `- ${name}: ${vals.join(', ')}`;
+        }).join('\n');
+
+        const prompt =
+            `You are a data analyst. Analyze the following chart data and give 3 concise bullet-point insights about trends, peaks, dips, or comparisons. Be specific with numbers.\n\n` +
+            `Chart type: ${selectedType}\n` +
+            `Labels (${currentHeaders[0] || 'Category'}): ${currentLabels.join(', ')}\n` +
+            `Data:\n${seriesSummary}\n\n` +
+            `Respond with exactly 3 bullet points starting with •. No intro sentence.`;
+
+        try {
+            const result = await askAI(prompt);
+            text.textContent   = result;
+            loader.style.display = 'none';
+            text.style.display   = 'block';
+        } catch (err) {
+            loader.style.display = 'none';
+            text.textContent   = `⚠ ${err.message}`;
+            text.style.display   = 'block';
+            console.error(err);
+        }
+    });
+
+    $('closeInsightsBtn').addEventListener('click', () => {
+        $('aiInsightsPanel').style.display = 'none';
     });
 
     // Download PNG
