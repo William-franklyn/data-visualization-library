@@ -2,24 +2,16 @@
  * DataViz Studio — script.js
  */
 
-/* ── AI Config (OpenRouter) ──
-   Paste your OpenRouter API key below.
-   Get one free at https://openrouter.ai → Dashboard → API Keys
-   ⚠ Do not share this file publicly with your key inside. */
-const AI_API_KEY = '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';
-/* To use a different model: go to https://openrouter.ai/models → filter by "Free" → click a model → copy its ID */
-const AI_MODEL   = 'nvidia/nemotron-3-super-120b-a12b:free';
-const AI_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+/* ── AI Config ──
+   The API key lives in Vercel → Settings → Environment Variables as OPENROUTER_API_KEY.
+   Never paste the key here — requests go through /api/ai which keeps the key server-side.
+   To change model: https://openrouter.ai/models → filter Free → copy the model ID */
+const AI_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
 
 async function askAI(prompt) {
-    const res = await fetch(AI_API_URL, {
+    const res = await fetch('/api/ai', {
         method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${AI_API_KEY}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': window.location.href,   // required by OpenRouter for browser requests
-            'X-Title': 'DataViz Studio',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             model: AI_MODEL,
             messages: [{ role: 'user', content: prompt }],
