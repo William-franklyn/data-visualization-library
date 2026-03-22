@@ -6,7 +6,7 @@
    The API key lives in Vercel → Settings → Environment Variables as OPENROUTER_API_KEY.
    Never paste the key here — requests go through /api/ai which keeps the key server-side.
    To change model: https://openrouter.ai/models → filter Free → copy the model ID */
-const AI_MODEL = 'mistralai/mistral-7b-instruct:free';
+const AI_MODEL = 'qwen/qwen3-next-80b-a3b-instruct:free';
 
 async function askAI(prompt) {
     const res = await fetch('/api/ai', {
