@@ -2,7 +2,7 @@
     "outputDirectory": "docs",
     "functions": {
         "api/ai.js": {
-            "maxDuration": 30
+            "maxDuration": 60
         }
     },
     "routes": [
