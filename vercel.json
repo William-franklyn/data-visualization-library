@@ -1,0 +1,8 @@
+{
+    "outputDirectory": "docs",
+    "functions": {
+        "api/ai.js": {
+            "runtime": "edge"
+        }
+    }
+}
