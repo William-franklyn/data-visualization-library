@@ -23,9 +23,10 @@ window.addEventListener('load', function () {
     let currentValues     = [];
     let currentHeaders    = [];
     let selectedType      = 'bar';
-    let selectedTheme     = 'teal';
+    let selectedTheme     = 'custom';
     let showTable         = false;
     let cachedCSV         = null;
+    let cachedRawCSV      = null;
     let isFullscreen      = false;
     let zoomEnabled       = false;
     let zoomMode          = 'wheel'; // 'wheel' | 'box' | 'pan'
@@ -70,6 +71,7 @@ window.addEventListener('load', function () {
         earth:     { s: ['rgba(161,110,60,0.75)',  'rgba(120,78,40,1)'],    m: [[161,110,60],[180,140,90],[120,78,40],[200,175,130],[90,120,60],[140,100,50],[210,180,140]] },
         slate:     { s: ['rgba(100,116,139,0.75)', 'rgba(71,85,105,1)'],    m: [[100,116,139],[71,85,105],[148,163,184],[51,65,85],[203,213,225],[30,41,59],[241,245,249]] },
         mono:      { s: ['rgba(100,100,100,0.75)', 'rgba(30,30,30,1)'],     m: [[30,30,30],[70,70,70],[110,110,110],[150,150,150],[190,190,190],[210,210,210],[240,240,240]] },
+        custom:    { s: ['rgba(75,192,192,0.75)',  'rgba(75,192,192,1)'],   m: null, hue: 180 },
     };
 
     function getColors(chartType, count) {
@@ -78,11 +80,12 @@ window.addEventListener('load', function () {
 
         if (isXY) return { bg: theme.s[0], border: theme.s[1] };
 
-        // Multi-color (doughnut, polar) — rainbow uses HSL generation
+        // Multi-color (doughnut, polar) — generate HSL spread from starting hue
         if (!theme.m) {
+            const startHue = theme.hue !== undefined ? theme.hue : 0;
             const bgs = [], borders = [];
             for (let i = 0; i < count; i++) {
-                const h = Math.round((i / count) * 360);
+                const h = Math.round((startHue + (i / count) * 360) % 360);
                 bgs.push(`hsla(${h},80%,58%,0.78)`);
                 borders.push(`hsl(${h},80%,44%)`);
             }
@@ -101,28 +104,44 @@ window.addEventListener('load', function () {
     /* ══════════════════════════════════════════════════
        BUILD CHART CONFIG
     ══════════════════════════════════════════════════ */
-    function buildConfig(chartType, labels, dataValues, headerLabels) {
-        const { bg, border } = getColors(chartType, dataValues.length);
+    function buildConfig(chartType, labels, valuesArray, headerLabels) {
         const isXY = chartType === 'bar' || chartType === 'line';
 
-        // Dataset
-        const ds = {
-            label: (headerLabels && headerLabels[1]) || 'Data',
-            data: dataValues,
-            backgroundColor: bg,
-            borderColor: border,
-            borderWidth: 1.5,
-        };
-        if (chartType === 'bar') {
-            ds.barPercentage = opts.barThickness;
-            ds.categoryPercentage = 0.8;
-        }
-        if (chartType === 'line') {
-            ds.tension       = opts.tension;
-            ds.pointRadius   = opts.pointSize;
-            ds.pointHoverRadius = opts.pointSize + 2;
-            ds.fill          = opts.fill;
-        }
+        // Doughnut / polar only use first series
+        const datasetsData = isXY ? valuesArray : [valuesArray[0]];
+        const theme = THEMES[selectedTheme] || THEMES.teal;
+
+        const datasets = datasetsData.map((dataValues, dsIdx) => {
+            let bg, border;
+            if (datasetsData.length === 1) {
+                const c = getColors(chartType, dataValues.length);
+                bg = c.bg; border = c.border;
+            } else {
+                // Each series gets its own distinct color from the palette
+                const palette = theme.m || [[75,192,192],[255,99,132],[255,206,86],[54,162,235],[153,102,255],[255,159,64],[201,203,207]];
+                const [r, g, b] = palette[dsIdx % palette.length];
+                bg = `rgba(${r},${g},${b},0.75)`;
+                border = `rgba(${r},${g},${b},1)`;
+            }
+            const ds = {
+                label: (headerLabels && headerLabels[dsIdx + 1]) || `Series ${dsIdx + 1}`,
+                data: dataValues,
+                backgroundColor: bg,
+                borderColor: border,
+                borderWidth: 1.5,
+            };
+            if (chartType === 'bar') {
+                ds.barPercentage = opts.barThickness;
+                ds.categoryPercentage = 0.8;
+            }
+            if (chartType === 'line') {
+                ds.tension          = opts.tension;
+                ds.pointRadius      = opts.pointSize;
+                ds.pointHoverRadius = opts.pointSize + 2;
+                ds.fill             = opts.fill;
+            }
+            return ds;
+        });
 
         // Grid color (read CSS var safely)
         let gridColor = '#e0dbd4';
@@ -175,7 +194,7 @@ window.addEventListener('load', function () {
 
         return {
             type: chartType,
-            data: { labels, datasets: [ds] },
+            data: { labels, datasets },
             options: {
                 indexAxis: (chartType === 'bar' && opts.horizontal) ? 'y' : 'x',
                 responsive: true,
@@ -191,7 +210,7 @@ window.addEventListener('load', function () {
                     tooltip: {
                         callbacks: {
                             label: ctx => {
-                                const val = ctx.parsed.y ?? ctx.parsed.value ?? ctx.parsed;
+                                const val = ctx.parsed.y ?? ctx.parsed;
                                 return ` ${ctx.dataset.label}: ${val}`;
                             }
                         }
@@ -259,27 +278,7 @@ window.addEventListener('load', function () {
             skipEmptyLines: true,
             complete(results) {
                 if (!results?.data?.length) { showToast('⚠ CSV is empty or invalid.'); return; }
-                const headers = results.meta.fields;
-                const numCols = headers.reduce((acc, h, i) => {
-                    if (results.data.every(row => row[h] !== '' && !isNaN(Number(row[h])))) acc.push(i);
-                    return acc;
-                }, []);
-                if (!numCols.length) { showToast('⚠ No numeric columns found.'); return; }
-
-                let colIdx = numCols[0];
-                if (numCols.length > 1) {
-                    const sel = prompt(
-                        'Multiple numeric columns found.\nEnter column number to visualize:\n' +
-                        numCols.map((n, i) => `${i + 1}: ${headers[n]}`).join('\n')
-                    );
-                    const n = parseInt(sel, 10);
-                    if (!isNaN(n) && n >= 1 && n <= numCols.length) colIdx = numCols[n - 1];
-                }
-                callback(
-                    results.data.map(row => row[headers[0]] || 'Data'),
-                    results.data.map(row => Number(row[headers[colIdx]])),
-                    [headers[0], headers[colIdx]]
-                );
+                callback(results.meta.fields, results.data);
             },
             error: e => { console.error(e); showToast('⚠ Error parsing CSV.'); }
         });
@@ -296,23 +295,28 @@ window.addEventListener('load', function () {
         setTimeout(() => t.classList.remove('show'), 2800);
     }
 
-    function updateStats(values) {
-        if (!values.length) return;
-        const total = values.reduce((a, b) => a + b, 0);
+    function updateStats(valuesArray) {
+        const all = valuesArray.flat();
+        if (!all.length) return;
+        const total = all.reduce((a, b) => a + b, 0);
         const fmt   = n => Number.isInteger(n) ? n.toLocaleString() : n.toFixed(2);
         document.getElementById('statTotal').textContent = fmt(total);
-        document.getElementById('statAvg').textContent   = fmt(total / values.length);
-        document.getElementById('statMax').textContent   = fmt(Math.max(...values));
-        document.getElementById('statMin').textContent   = fmt(Math.min(...values));
+        document.getElementById('statAvg').textContent   = fmt(total / all.length);
+        document.getElementById('statMax').textContent   = fmt(Math.max(...all));
+        document.getElementById('statMin').textContent   = fmt(Math.min(...all));
         document.getElementById('statsBar').style.display = '';
     }
 
-    function updateDataTable(labels, values) {
+    function updateDataTable(labels, valuesArray, headers) {
         const tbody = document.getElementById('dataTableBody');
+        const thead = tbody.closest('table').querySelector('thead tr');
         tbody.innerHTML = '';
+        thead.innerHTML = '<th>#</th><th>' + (headers[0] || 'Label') + '</th>' +
+            valuesArray.map((_, i) => `<th>${headers[i + 1] || 'Value ' + (i + 1)}</th>`).join('');
         labels.forEach((lbl, i) => {
             const tr = document.createElement('tr');
-            tr.innerHTML = `<td>${i + 1}</td><td>${lbl}</td><td class="num">${values[i]}</td>`;
+            tr.innerHTML = `<td>${i + 1}</td><td>${lbl}</td>` +
+                valuesArray.map(vals => `<td class="num">${vals[i] ?? '—'}</td>`).join('');
             tbody.appendChild(tr);
         });
     }
@@ -342,17 +346,112 @@ window.addEventListener('load', function () {
     });
     updateOptionGroups(selectedType);
 
-    // Color swatches
-    $$('.swatch').forEach(sw => {
-        sw.addEventListener('click', () => {
-            $$('.swatch').forEach(s => s.classList.remove('active'));
-            sw.classList.add('active');
-            selectedTheme = sw.dataset.themeName;
-            const nameEl = $('activeThemeName');
-            if (nameEl) nameEl.textContent = selectedTheme.toUpperCase();
+    // ── Color picker ──
+    (function () {
+        const canvas     = $('colorPickerCanvas');
+        const pc         = canvas.getContext('2d');
+        const hueSlider  = $('hueSlider');
+        const hexInputEl = $('hexInput');
+        const preview    = $('colorPreview');
+        const nameEl     = $('activeThemeName');
+
+        let hue = 180;
+        let pickerX = Math.round(canvas.width  * 0.7);
+        let pickerY = Math.round(canvas.height * 0.3);
+
+        function drawCanvas() {
+            const w = canvas.width, h = canvas.height;
+            const satGrad = pc.createLinearGradient(0, 0, w, 0);
+            satGrad.addColorStop(0, '#fff');
+            satGrad.addColorStop(1, `hsl(${hue},100%,50%)`);
+            pc.fillStyle = satGrad;
+            pc.fillRect(0, 0, w, h);
+            const valGrad = pc.createLinearGradient(0, 0, 0, h);
+            valGrad.addColorStop(0, 'transparent');
+            valGrad.addColorStop(1, '#000');
+            pc.fillStyle = valGrad;
+            pc.fillRect(0, 0, w, h);
+            // Crosshair
+            pc.beginPath();
+            pc.arc(pickerX, pickerY, 6, 0, 2 * Math.PI);
+            pc.strokeStyle = 'rgba(255,255,255,0.9)';
+            pc.lineWidth = 2;
+            pc.stroke();
+            pc.beginPath();
+            pc.arc(pickerX, pickerY, 6, 0, 2 * Math.PI);
+            pc.strokeStyle = 'rgba(0,0,0,0.4)';
+            pc.lineWidth = 1;
+            pc.stroke();
+        }
+
+        function readPixel(x, y) {
+            const d = pc.getImageData(
+                Math.max(0, Math.min(canvas.width  - 1, Math.round(x))),
+                Math.max(0, Math.min(canvas.height - 1, Math.round(y))),
+                1, 1
+            ).data;
+            return [d[0], d[1], d[2]];
+        }
+
+        function toHex(r, g, b) {
+            return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+        }
+
+        function applyColor(r, g, b) {
+            const hex = toHex(r, g, b);
+            hexInputEl.value = hex;
+            preview.style.background = hex;
+            nameEl.textContent = hex.toUpperCase();
+            THEMES.custom = { s: [`rgba(${r},${g},${b},0.75)`, `rgba(${r},${g},${b},1)`], m: null, hue };
+            selectedTheme = 'custom';
+            if (myChartInstance) renderChart();
+        }
+
+        function pickAt(x, y) {
+            pickerX = Math.max(0, Math.min(canvas.width  - 1, x));
+            pickerY = Math.max(0, Math.min(canvas.height - 1, y));
+            drawCanvas();
+            applyColor(...readPixel(pickerX, pickerY));
+        }
+
+        function canvasCoords(e) {
+            const r  = canvas.getBoundingClientRect();
+            const sx = canvas.width  / r.width;
+            const sy = canvas.height / r.height;
+            const src = e.touches ? e.touches[0] : e;
+            return [(src.clientX - r.left) * sx, (src.clientY - r.top) * sy];
+        }
+
+        let dragging = false;
+        canvas.addEventListener('mousedown',  e => { dragging = true;  pickAt(...canvasCoords(e)); });
+        window.addEventListener('mousemove',  e => { if (dragging) pickAt(...canvasCoords(e)); });
+        window.addEventListener('mouseup',    ()  => { dragging = false; });
+        canvas.addEventListener('touchstart', e => { e.preventDefault(); pickAt(...canvasCoords(e)); }, { passive: false });
+        canvas.addEventListener('touchmove',  e => { e.preventDefault(); pickAt(...canvasCoords(e)); }, { passive: false });
+
+        hueSlider.addEventListener('input', () => {
+            hue = Number(hueSlider.value);
+            drawCanvas();
+            applyColor(...readPixel(pickerX, pickerY));
+        });
+
+        hexInputEl.addEventListener('change', e => {
+            const v = e.target.value.trim();
+            if (!/^#[0-9a-fA-F]{6}$/.test(v)) return;
+            const r = parseInt(v.slice(1, 3), 16);
+            const g = parseInt(v.slice(3, 5), 16);
+            const b = parseInt(v.slice(5, 7), 16);
+            preview.style.background = v;
+            nameEl.textContent = v.toUpperCase();
+            THEMES.custom = { s: [`rgba(${r},${g},${b},0.75)`, `rgba(${r},${g},${b},1)`], m: null, hue };
+            selectedTheme = 'custom';
             if (myChartInstance) renderChart();
         });
-    });
+
+        // Initial draw + pick
+        drawCanvas();
+        applyColor(...readPixel(pickerX, pickerY));
+    })();
 
     // Dark mode toggle
     $('themeToggle').addEventListener('click', () => {
@@ -422,29 +521,77 @@ window.addEventListener('load', function () {
     function handleFile(file) {
         fileNameEl.textContent = '⏳ Parsing ' + file.name + '…';
         fileNameEl.style.display = 'block';
-        cachedCSV = null;
-        parseCSV(file, (labels, values, headers) => {
-            cachedCSV = { labels, values, headers };
-            fileNameEl.textContent = '📄 ' + file.name + ' (' + values.length + ' rows ready)';
-            showToast('✓ CSV loaded — click Visualize');
+        cachedCSV    = null;
+        cachedRawCSV = null;
+        parseCSV(file, (headers, rows) => {
+            cachedRawCSV = { headers, rows };
+            fileNameEl.textContent = '📄 ' + file.name + ' (' + rows.length + ' rows)';
+            populateColumnSelector(headers, rows);
+            showToast('✓ CSV loaded — select columns below');
         });
     }
+
+    function populateColumnSelector(headers, rows) {
+        const list = $('columnList');
+        list.innerHTML = '';
+        headers.forEach((h, i) => {
+            const chip = document.createElement('div');
+            chip.className = 'col-chip';
+            chip.innerHTML = `<span class="col-num">${i + 1}</span><span class="col-name">${h}</span>`;
+            list.appendChild(chip);
+        });
+        // Auto-detect numeric columns for sensible defaults
+        const numericIdxs = headers.reduce((acc, h, i) => {
+            if (rows.every(r => r[h] !== '' && !isNaN(Number(r[h])))) acc.push(i + 1);
+            return acc;
+        }, []);
+        $('labelColInput').value = '1';
+        $('dataColInput').value  = numericIdxs.length ? numericIdxs.join(', ') : '2';
+        $('columnSelectorPanel').style.display = 'block';
+    }
+
+    // Apply column selection from CSV
+    $('applyColumnsBtn').addEventListener('click', () => {
+        if (!cachedRawCSV) { showToast('⚠ Upload a CSV first.'); return; }
+        const { headers, rows } = cachedRawCSV;
+
+        const labelColNum = parseInt($('labelColInput').value.trim(), 10);
+        if (isNaN(labelColNum) || labelColNum < 1 || labelColNum > headers.length) {
+            showToast('⚠ Invalid label column number.'); return;
+        }
+
+        const dataColNums = $('dataColInput').value
+            .split(',')
+            .map(s => parseInt(s.trim(), 10))
+            .filter(n => !isNaN(n) && n >= 1 && n <= headers.length);
+        if (!dataColNums.length) { showToast('⚠ No valid data columns selected.'); return; }
+
+        const labelHeader = headers[labelColNum - 1];
+        const dataHeaders = dataColNums.map(n => headers[n - 1]);
+
+        cachedCSV = {
+            labels:  rows.map(r => String(r[labelHeader] ?? 'Data')),
+            values:  dataHeaders.map(col => rows.map(r => Number(r[col]))),
+            headers: [labelHeader, ...dataHeaders],
+        };
+        showToast(`✓ ${dataColNums.length} column(s) selected — click Visualize`);
+    });
 
     // Visualize
     $('visualizeBtn').addEventListener('click', () => {
         const dataStr  = $('dataInput').value.trim();
         const labelStr = $('labelInput').value.trim();
 
-        if (!dataStr && !cachedCSV) { showToast('⚠ Enter data or upload a CSV.'); return; }
+        if (!dataStr && !cachedCSV) { showToast('⚠ Enter data or upload a CSV, then apply columns.'); return; }
 
         if (dataStr) {
-            const values = dataStr.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n));
+            const values = dataStr.split(',').map(s => s.trim()).filter(s => s !== '').map(s => Number(s)).filter(n => !isNaN(n));
             if (!values.length) { showToast('⚠ No valid numbers found.'); return; }
             const labels = labelStr
                 ? labelStr.split(',').map(s => s.trim())
                 : values.map((_, i) => `Item ${i + 1}`);
             currentLabels  = labels;
-            currentValues  = values;
+            currentValues  = [values];
             currentHeaders = ['Labels', 'Values'];
         } else {
             currentLabels  = cachedCSV.labels;
@@ -453,7 +600,7 @@ window.addEventListener('load', function () {
         }
         renderChart();
         updateStats(currentValues);
-        updateDataTable(currentLabels, currentValues);
+        updateDataTable(currentLabels, currentValues, currentHeaders);
         if (showTable) $('dataTableContainer').classList.add('visible');
         showToast('✓ Chart generated!');
     });
@@ -465,7 +612,10 @@ window.addEventListener('load', function () {
         $('labelInput').value = '';
         fileInput.value       = '';
         cachedCSV             = null;
+        cachedRawCSV          = null;
         fileNameEl.style.display = 'none';
+        $('columnSelectorPanel').style.display = 'none';
+        $('columnList').innerHTML = '';
         currentLabels = []; currentValues = [];
         $('myChart').style.display    = 'none';
         $('emptyState').style.display = '';
@@ -522,6 +672,7 @@ window.addEventListener('load', function () {
         // Reset all three buttons
         ['zoomWheel', 'zoomBox', 'zoomPan'].forEach(id => {
             const b = $(id);
+            if (!b) return;
             b.classList.remove('active');
             b.style.cssText = '';
         });

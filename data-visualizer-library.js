@@ -24,7 +24,7 @@
                         if (context.parsed.y !== null) {
                             label += context.parsed.y;
                         } else if (context.parsed !== null) {
-                            label += context.parsed.value;
+                            label += context.parsed;
                         }
                         return label;
                     }
@@ -47,7 +47,7 @@
         for (let i = 0; i < num; i++) {
             const r = Math.floor(Math.random() * 255);
             const g = Math.floor(Math.random() * 255);
-            b = Math.floor(Math.random() * 255); // fixed: variable b was not declared
+            const b = Math.floor(Math.random() * 255);
             colors.push(`rgba(${r},${g},${b},0.6)`);
         }
         return colors;
@@ -79,16 +79,41 @@
             console.warn('Warning: Number of labels does not match the number of data values.');
         }
 
-        let backgroundColor;
-        let borderColor;
+        // Normalize: accept a flat array (single series) or array of arrays (multi-series)
+        const valuesArray = Array.isArray(dataValues[0]) ? dataValues : [dataValues];
+        const isXY = chartType === 'bar' || chartType === 'line';
 
-        if (chartType === 'bar' || chartType === 'line') {
-            backgroundColor = 'rgba(75, 192, 192, 0.6)';
-            borderColor = 'rgba(75, 192, 192, 1)';
-        } else {
-            backgroundColor = generateRandomColors(dataValues.length);
-            borderColor = backgroundColor.map(color => color.replace('0.6', '1'));
-        }
+        const palette = [
+            [75,192,192],[255,99,132],[255,206,86],[54,162,235],
+            [153,102,255],[255,159,64],[201,203,207]
+        ];
+
+        // For doughnut/polar only use the first series
+        const datasetsData = isXY ? valuesArray : [valuesArray[0]];
+
+        const datasets = datasetsData.map((vals, i) => {
+            let backgroundColor, borderColor;
+            if (datasetsData.length === 1 && !isXY) {
+                backgroundColor = generateRandomColors(vals.length);
+                borderColor     = backgroundColor.map(c => c.replace('0.6', '1'));
+            } else if (datasetsData.length === 1) {
+                backgroundColor = 'rgba(75, 192, 192, 0.6)';
+                borderColor     = 'rgba(75, 192, 192, 1)';
+            } else {
+                const [r, g, b] = palette[i % palette.length];
+                backgroundColor = `rgba(${r},${g},${b},0.6)`;
+                borderColor     = `rgba(${r},${g},${b},1)`;
+            }
+            return {
+                label: (headerLabels && headerLabels[i + 1]) || `Series ${i + 1}`,
+                data: vals,
+                backgroundColor,
+                borderColor,
+                borderWidth: 1,
+                tension: chartType === 'line' ? 0.4 : 0,
+                fill:    chartType === 'line' ? false : undefined,
+            };
+        });
 
         const chartOptions = {
             ...defaultConfig,
@@ -96,24 +121,20 @@
                 ...defaultConfig.scales,
                 y: {
                     ...defaultConfig.scales.y,
-                    display: (chartType === 'bar' || chartType === 'line'),
+                    display: isXY,
                     title: {
-                        display: headerLabels.length > 1 && (chartType === 'bar' || chartType === 'line'),
+                        display: headerLabels.length > 1 && isXY,
                         text: headerLabels[1] || '',
-                        font: {
-                            weight: 'bold'
-                        }
+                        font: { weight: 'bold' }
                     }
                 },
                 x: {
                     ...defaultConfig.scales.x,
-                    display: (chartType === 'bar' || chartType === 'line'),
+                    display: isXY,
                     title: {
-                        display: headerLabels.length > 1 && (chartType === 'bar' || chartType === 'line'),
+                        display: headerLabels.length > 1 && isXY,
                         text: headerLabels[0] || '',
-                        font: {
-                            weight: 'bold'
-                        }
+                        font: { weight: 'bold' }
                     }
                 }
             }
@@ -122,18 +143,7 @@
         try {
             const myChartInstance = new Chart(ctx, {
                 type: chartType,
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: 'Data',
-                        data: dataValues,
-                        backgroundColor: backgroundColor,
-                        borderColor: borderColor,
-                        borderWidth: 1,
-                        tension: chartType === 'line' ? 0.4 : 0,
-                        fill: chartType === 'line' ? false : undefined
-                    }]
-                },
+                data: { labels, datasets },
                 options: chartOptions
             });
             return myChartInstance;
@@ -144,7 +154,6 @@
     }
 
     function parseCSV(file, callback) {
-        // ... (your parseCSV function as it was)
         if (!file) {
             throw new Error('CSV file is required.');
         }
@@ -162,44 +171,41 @@
             header: true,
             skipEmptyLines: true,
             complete: function(results) {
-                if (results && results.data && results.data.length > 0) {
-                    const headers = results.meta.fields;
-                    const numberColumns = [];
-                    for (let i = 0; i < headers.length; i++){
-                        let isNumber = true;
-                        for(let j = 0; j < results.data.length; j++){
-                            if (isNaN(Number(results.data[j][headers[i]]))){
-                                isNumber = false;
-                                break;
-                            }
-                        }
-                        if (isNumber){
-                            numberColumns.push(i);
-                        }
-                    }
-
-                    if (numberColumns.length === 0) {
-                        alert('No numerical data found in the CSV file.');
-                        return;
-                    }
-                    let dataColumnIndex = numberColumns[0];
-                    if (numberColumns.length > 1){
-                        const selectedColumn = prompt(`Multiple numeric columns found. Please enter the column number you want to visualize (starting from 1, e.g., "1", "2", etc.):\n${numberColumns.map((n, index) => `Column ${index + 1}: ${headers[n]}`).join(', ')}`);
-                        const selectedColumnNumber = parseInt(selectedColumn, 10);
-                        if (isNaN(selectedColumnNumber) || selectedColumnNumber < 1 || selectedColumnNumber > numberColumns.length) {
-                            alert('Invalid column number. Using the first numeric column.');
-                        }
-                        else{
-                            dataColumnIndex = numberColumns[selectedColumnNumber-1];
-                        }
-                    }
-                    const dataValues = results.data.map(row => Number(row[headers[dataColumnIndex]]));
-                    const labels = results.data.map(row => row[headers[0]] || `Data`);
-                    const headerLabels = [headers[0], headers[dataColumnIndex]];
-                    callback(labels, dataValues, headerLabels);
-                } else {
+                if (!results || !results.data || results.data.length === 0) {
                     alert('Error: The CSV file is empty or invalid.');
+                    return;
                 }
+
+                const headers = results.meta.fields;
+                const colList = headers.map((h, i) => `${i + 1}: ${h}`).join('\n');
+
+                // Label column selection
+                const labelSel = prompt(`Select the label column (enter its number):\n\n${colList}`);
+                let labelIdx = parseInt(labelSel, 10) - 1;
+                if (isNaN(labelIdx) || labelIdx < 0 || labelIdx >= headers.length) {
+                    alert('Invalid selection. Using column 1 as labels.');
+                    labelIdx = 0;
+                }
+
+                // Data column(s) selection
+                const dataSel = prompt(`Select data column(s) to visualize.\nEnter one number or several separated by commas:\n\n${colList}`);
+                const dataIdxs = (dataSel || '')
+                    .split(',')
+                    .map(s => parseInt(s.trim(), 10) - 1)
+                    .filter(n => !isNaN(n) && n >= 0 && n < headers.length);
+
+                if (!dataIdxs.length) {
+                    alert('No valid data columns selected.');
+                    return;
+                }
+
+                const labelHeader = headers[labelIdx];
+                const dataHeaders = dataIdxs.map(i => headers[i]);
+                const labels      = results.data.map(row => String(row[labelHeader] ?? 'Data'));
+                const valuesArray = dataHeaders.map(col => results.data.map(row => Number(row[col])));
+                const headerLabels = [labelHeader, ...dataHeaders];
+
+                callback(labels, valuesArray, headerLabels);
             },
             error: function(error) {
                 console.error('Error parsing CSV file:', error);
@@ -230,29 +236,19 @@
         // These elements might not exist if the library is used in a different context
         // Consider making full-screen functionality optional or passed as parameters
         const minimizeBtn = document.getElementById('minimizeBtn');
-        const fullscreenBtn = document.getElementById('fullscreenBtn'); // Note: You asked to remove this, but the function still references it.
+        const fullscreenBtn = document.getElementById('fullscreenBtn');
 
         if (!isFullscreen) {
-            // Fullscreen
             if (containerElement) containerElement.classList.add('fullscreen');
             if (chartContainer) chartContainer.classList.add('fullscreen');
-            if (fullscreenBtn){
-                fullscreenBtn.style.display = 'none';
-            }
-            if(minimizeBtn){
-                 minimizeBtn.style.display = 'block';
-            }
+            if (fullscreenBtn) fullscreenBtn.style.display = 'none';
+            if (minimizeBtn) minimizeBtn.style.display = 'block';
             isFullscreen = true;
         } else {
-            // Minimize
             if (containerElement) containerElement.classList.remove('fullscreen');
             if (chartContainer) chartContainer.classList.remove('fullscreen');
-             if (fullscreenBtn){
-                fullscreenBtn.style.display = 'block';
-            }
-            if(minimizeBtn){
-                 minimizeBtn.style.display = 'none';
-            }
+            if (fullscreenBtn) fullscreenBtn.style.display = 'block';
+            if (minimizeBtn) minimizeBtn.style.display = 'none';
             isFullscreen = false;
         }
     }
