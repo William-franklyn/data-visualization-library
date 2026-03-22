@@ -6,7 +6,7 @@
    The API key lives in Vercel → Settings → Environment Variables as OPENROUTER_API_KEY.
    Never paste the key here — requests go through /api/ai which keeps the key server-side.
    To change model: https://openrouter.ai/models → filter Free → copy the model ID */
-const AI_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
+const AI_MODEL = 'meta-llama/llama-3.1-8b-instruct:free';
 
 async function askAI(prompt) {
     const res = await fetch('/api/ai', {
@@ -16,7 +16,7 @@ async function askAI(prompt) {
             model: AI_MODEL,
             messages: [{ role: 'user', content: prompt }],
             temperature: 0.3,
-            max_tokens: 4000,
+            max_tokens: 500,
         }),
     });
     if (!res.ok) {
@@ -27,20 +27,7 @@ async function askAI(prompt) {
     const data = await res.json();
     const msg = data.choices[0].message;
 
-    // Nemotron reasoning model puts thinking in msg.reasoning and final answer in msg.content.
-    // With enough max_tokens, content should be populated. Fall back to extracting
-    // the last bullet block from reasoning if content is still null.
-    let content = msg.content;
-    if (!content) {
-        const reasoningText = msg.reasoning
-            || msg.reasoning_details?.map(d => d.text || d.content || '').join('\n')
-            || '';
-        // Find the last group of consecutive bullet lines (the final composed answer)
-        const blocks = reasoningText.split(/\n{2,}/);
-        const lastBulletBlock = [...blocks].reverse().find(b => /^•/m.test(b));
-        const bullets = lastBulletBlock?.match(/^•.+$/gm);
-        content = bullets ? bullets.join('\n') : null;
-    }
+    const content = msg.content?.trim();
     if (!content) throw new Error('AI returned an empty response.');
     return content.trim();
 }
