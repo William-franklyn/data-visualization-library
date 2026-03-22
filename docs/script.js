@@ -6,7 +6,7 @@
    Paste your OpenRouter API key below.
    Get one free at https://openrouter.ai → Dashboard → API Keys
    ⚠ Do not share this file publicly with your key inside. */
-const AI_API_KEY = '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';
+const AI_API_KEY = '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';
 /* To use a different model: go to https://openrouter.ai/models → filter by "Free" → click a model → copy its ID */
 const AI_MODEL   = 'nvidia/nemotron-3-super-120b-a12b:free';
 const AI_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
