@@ -1,30 +1,43 @@
 {
-    "name": "data-visualizer-library", 
-    "version": "1.0.0", 
-    "description": "A simple JavaScript library for creating various charts with Chart.js and Papa Parse.",
-    "main": "data-visualizer-library.js", 
+    "name": "data-visualizer-library",
+    "version": "1.0.0",
+    "description": "A JavaScript charting library and MCP-based AI agent (CSV parsing, chart generation, data insights) for Chart.js and Papa Parse.",
+    "main": "data-visualizer-library.js",
+    "bin": {
+        "data-visualizer-agent": "mcp/stdio.js"
+    },
+    "engines": {
+        "node": ">=18"
+    },
     "scripts": {
-      "test": "echo \"Error: no test specified\" && exit 1"
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "agent": "node mcp/stdio.js"
     },
     "keywords": [
-      "data visualization",
-      "charts",
-      "chart.js",
-      "csv",
-      "data analysis"
+        "data visualization",
+        "charts",
+        "chart.js",
+        "csv",
+        "data analysis",
+        "ai agent",
+        "mcp",
+        "model context protocol"
     ],
     "author": "William Frank Mahunda <williamfranklyn2020@gmail.com>",
-    "license": "MIT", 
+    "license": "MIT",
     "dependencies": {
-      "chart.js": "^4.0.0", 
-      "papaparse": "^5.0.0" 
+        "@anthropic-ai/sdk": "^0.122.0",
+        "@modelcontextprotocol/sdk": "^1.30.0",
+        "chart.js": "^4.0.0",
+        "papaparse": "^5.0.0",
+        "zod": "^4.5.4"
     },
     "repository": {
-      "type": "git",
-      "url": "https://github.com/William-franklyn/data-visualization-library.git"
+        "type": "git",
+        "url": "https://github.com/William-franklyn/data-visualization-library.git"
     },
     "bugs": {
-      "url": "https://github.com/William-franklyn/data-visualization-library/issues"
+        "url": "https://github.com/William-franklyn/data-visualization-library/issues"
     },
     "homepage": "https://datavz.vercel.app"
-  }
+}

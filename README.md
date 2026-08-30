@@ -7,7 +7,10 @@ A lightweight JavaScript library to easily create and display various types of c
 - **Manual Data Input:** Generate charts from comma-separated numbers and labels
 - **CSV Import:** Upload CSV files with automatic column selection and header detection
 - **Multi-series Support:** Visualize multiple data columns at once
-- **AI Insights:** AI-powered data analysis powered by NVIDIA Nemotron via OpenRouter
+- **AI Insights:** AI-powered data analysis (web demo runs on NVIDIA Nemotron via OpenRouter)
+- **AI Agent (MCP):** The same charting/analysis logic is exposed as an [MCP](https://modelcontextprotocol.io)
+  server — Claude Desktop, Claude Code, ChatGPT, or any other MCP-capable client can call it directly. See
+  [AI Agent (MCP)](#ai-agent-mcp) below.
 
 ## How to Use
 
@@ -75,9 +78,76 @@ document.addEventListener('DOMContentLoaded', () => {
 ### `DataVisualizer.clearGraph(chartInstance, dataInput, labelInput, fileInput)`
 Destroys the chart instance and clears all input fields.
 
+## AI Agent (MCP)
+
+This repo also ships as an **AI agent**: the same CSV-parsing and chart-building logic, wrapped in
+an [MCP](https://modelcontextprotocol.io) server so it can be called directly by Claude, ChatGPT,
+or any other MCP-capable app — not just clicked through in a browser.
+
+### Tools
+
+| Tool | What it does | Needs an API key? |
+|------|--------------|--------------------|
+| `parse_csv` | Parses raw CSV text and suggests a label column + numeric data column(s) | No |
+| `create_chart` | Builds a bar/line/doughnut/polarArea chart and renders it to a PNG (via [QuickChart.io](https://quickchart.io)) | No |
+| `analyze_data` | Deterministic stats — sum, mean, median, min/max, trend | No |
+| `generate_insights` | LLM-written analysis or answer to a specific question about the data | Yes |
+
+`parse_csv`, `create_chart`, and `analyze_data` work with no configuration at all. Only
+`generate_insights` needs an AI provider — see [Environment variables](#environment-variables).
+
+### Run it locally (Claude Desktop / Claude Code)
+
+```bash
+npm install
+```
+
+**Claude Code:**
+
+```bash
+claude mcp add data-visualizer -- node /absolute/path/to/data-visualization-library/mcp/stdio.js
+```
+
+**Claude Desktop** (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "data-visualizer": {
+      "command": "node",
+      "args": ["/absolute/path/to/data-visualization-library/mcp/stdio.js"],
+      "env": { "ANTHROPIC_API_KEY": "sk-ant-..." }
+    }
+  }
+}
+```
+
+### Use the hosted version (Claude.ai / ChatGPT / anywhere else)
+
+The same server is also deployed as a Streamable HTTP MCP endpoint at:
+
+```
+https://datavz.vercel.app/api/mcp
+```
+
+Add it as a remote MCP connector — in Claude.ai this is under Settings → Connectors → Add custom
+connector; ChatGPT's Apps/Connectors surface also speaks MCP. No install required.
+
+### Environment variables
+
+| Variable | Required for | Notes |
+|----------|---------------|-------|
+| `OPENROUTER_API_KEY` | `generate_insights` (fallback), the existing web demo's AI Insights panel | Already in use — free-tier OpenRouter models, which is why the git history shows several model swaps chasing rate limits. |
+| `ANTHROPIC_API_KEY` | `generate_insights` (preferred) | If set, `generate_insights` uses Claude (`claude-opus-5`) instead of OpenRouter — more reliable than free-tier models. Not required for the agent to work; only needed if you want this upgrade. |
+
+If neither variable is set, `parse_csv`, `create_chart`, and `analyze_data` still work — only
+`generate_insights` will return an error telling you which env var to add.
+
 ## Dependencies
 - [Chart.js](https://www.chartjs.org/)
 - [Papa Parse](https://www.papaparse.com/)
+- [@modelcontextprotocol/sdk](https://www.npmjs.com/package/@modelcontextprotocol/sdk) (AI agent)
+- [@anthropic-ai/sdk](https://www.npmjs.com/package/@anthropic-ai/sdk) (AI agent, optional Claude provider)
 
 ## License
 MIT License
