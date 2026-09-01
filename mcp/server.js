@@ -1,5 +1,12 @@
 'use strict';
 
+// Load .env from the repo root regardless of the process's working directory
+// (Claude Desktop/Code launch this without necessarily cd-ing into the repo
+// first). On Vercel, .env is never part of the deployed bundle (it's
+// gitignored), so this is a harmless no-op there and Vercel's own
+// dashboard-configured env vars are used as-is.
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { z } = require('zod');
 
