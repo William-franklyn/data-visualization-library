@@ -89,12 +89,15 @@ or any other MCP-capable app — not just clicked through in a browser.
 | Tool | What it does | Needs an API key? |
 |------|--------------|--------------------|
 | `parse_csv` | Parses raw CSV text and suggests a label column + numeric data column(s) | No |
-| `create_chart` | Builds a bar/line/doughnut/polarArea chart and renders it to a PNG (via [QuickChart.io](https://quickchart.io)) | No |
-| `analyze_data` | Deterministic stats — sum, mean, median, min/max, trend | No |
+| `create_chart` | Builds a bar/line/doughnut/polarArea chart and renders it to a PNG (via [QuickChart.io](https://quickchart.io)). Pass `forecastPeriods` to overlay a dashed trend projection. | No |
+| `analyze_data` | Deterministic stats — sum, mean, median, min/max, trend, IQR-based outliers per series, and Pearson correlation between every pair of series | No |
+| `forecast_trend` | Linear-regression projection of future values, with slope/trend direction and an R² fit-quality flag, no chart required | No |
 | `generate_insights` | LLM-written analysis or answer to a specific question about the data | Yes |
 
-`parse_csv`, `create_chart`, and `analyze_data` work with no configuration at all. Only
-`generate_insights` needs an AI provider — see [Environment variables](#environment-variables).
+Only `generate_insights` needs an AI provider — see [Environment variables](#environment-variables).
+Everything else, including the new outlier/correlation/forecast analysis, works with zero
+configuration. Forecasting is a plain linear-trend fit (no seasonality modeling) — the `rSquared`/
+`fitQuality` field tells you how much to trust it on any given series.
 
 ### Run it locally (Claude Desktop / Claude Code)
 

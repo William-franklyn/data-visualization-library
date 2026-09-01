@@ -3,7 +3,7 @@
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { z } = require('zod');
 
-const { CHART_TYPES, parseCsv, buildChart, analyzeData } = require('./tools.js');
+const { CHART_TYPES, parseCsv, buildChart, analyzeData, forecastTrend } = require('./tools.js');
 const { renderChartImage } = require('./render.js');
 const { generateInsights } = require('./insights.js');
 
@@ -46,7 +46,8 @@ function createServer() {
       title: 'Create Chart',
       description:
         'Render a bar, line, doughnut, or polar area chart from labels and one or more numeric data series. ' +
-        'Returns a PNG image plus the underlying Chart.js configuration.',
+        'Returns a PNG image plus the underlying Chart.js configuration. For bar/line charts, pass ' +
+        'forecastPeriods to overlay a dashed linear-trend projection for each series.',
       inputSchema: {
         chartType: z.enum(CHART_TYPES),
         labels: z.array(z.string()).min(1),
@@ -56,11 +57,18 @@ function createServer() {
         title: z.string().optional(),
         xLabel: z.string().optional(),
         yLabel: z.string().optional(),
+        forecastPeriods: z
+          .number()
+          .int()
+          .min(1)
+          .max(24)
+          .optional()
+          .describe('Bar/line charts only. Extends the chart with N future points, projected via linear regression and drawn as a dashed line.'),
       },
     },
-    async ({ chartType, labels, series, seriesLabels, theme, title, xLabel, yLabel }) => {
+    async ({ chartType, labels, series, seriesLabels, theme, title, xLabel, yLabel, forecastPeriods }) => {
       try {
-        const config = buildChart(chartType, labels, series, seriesLabels, { theme, title, xLabel, yLabel });
+        const config = buildChart(chartType, labels, series, seriesLabels, { theme, title, xLabel, yLabel, forecastPeriods });
         const image = await renderChartImage(config);
         return {
           content: [
@@ -82,8 +90,9 @@ function createServer() {
     {
       title: 'Analyze Data',
       description:
-        'Compute deterministic statistics (sum, mean, median, min, max, trend) for one or more numeric series. ' +
-        'Free and instant — no AI call. Use this for quantitative facts before reaching for generate_insights.',
+        'Compute deterministic statistics for one or more numeric series: sum, mean, median, min, max, trend, ' +
+        'and IQR-based outliers per series, plus Pearson correlation between every pair of series (when 2+ are ' +
+        'given). Free and instant — no AI call. Use this for quantitative facts before reaching for generate_insights.',
       inputSchema: {
         labels: z.array(z.string()).min(1),
         series: seriesSchema,
@@ -93,6 +102,31 @@ function createServer() {
     async ({ labels, series, seriesLabels }) => {
       try {
         return jsonResult(analyzeData(labels, series, seriesLabels));
+      } catch (err) {
+        return errorResult(err);
+      }
+    }
+  );
+
+  server.registerTool(
+    'forecast_trend',
+    {
+      title: 'Forecast Trend',
+      description:
+        'Project future values for one or more numeric series using linear regression, without rendering a chart. ' +
+        'Returns per-series slope, trend direction, goodness-of-fit (R²), and the projected values. Best for ' +
+        'roughly linear trends — it will not capture seasonality or cycles. Use create_chart with forecastPeriods ' +
+        'instead if you also want a picture.',
+      inputSchema: {
+        labels: z.array(z.string()).min(2),
+        series: seriesSchema,
+        seriesLabels: z.array(z.string()).optional(),
+        periods: z.number().int().min(1).max(24).default(3).describe('How many future points to project.'),
+      },
+    },
+    async ({ labels, series, seriesLabels, periods }) => {
+      try {
+        return jsonResult(forecastTrend(labels, series, seriesLabels, periods));
       } catch (err) {
         return errorResult(err);
       }

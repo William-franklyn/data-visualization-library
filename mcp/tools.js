@@ -72,6 +72,107 @@ function columnsToSeries(rows, labelColumn, dataColumns) {
   return { labels, series, seriesLabels: dataColumns };
 }
 
+// --- shared stats helpers ----------------------------------------------------
+
+function quantile(sortedArr, q) {
+  const pos = (sortedArr.length - 1) * q;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  if (sortedArr[base + 1] !== undefined) {
+    return sortedArr[base] + rest * (sortedArr[base + 1] - sortedArr[base]);
+  }
+  return sortedArr[base];
+}
+
+// IQR method: robust to non-normal distributions and small sample sizes.
+function detectOutliers(nums, labels) {
+  const sorted = [...nums].sort((a, b) => a - b);
+  const q1 = quantile(sorted, 0.25);
+  const q3 = quantile(sorted, 0.75);
+  const iqr = q3 - q1;
+  const lowerBound = q1 - 1.5 * iqr;
+  const upperBound = q3 + 1.5 * iqr;
+  const outliers = [];
+  nums.forEach((v, i) => {
+    if (v < lowerBound || v > upperBound) {
+      outliers.push({ index: i, label: labels[i], value: v, direction: v < lowerBound ? 'low' : 'high' });
+    }
+  });
+  return outliers;
+}
+
+function pearsonCorrelation(a, b) {
+  const n = Math.min(a.length, b.length);
+  if (n < 2) return null;
+  const xs = a.slice(0, n);
+  const ys = b.slice(0, n);
+  const meanX = xs.reduce((s, v) => s + v, 0) / n;
+  const meanY = ys.reduce((s, v) => s + v, 0) / n;
+  let num = 0;
+  let denX = 0;
+  let denY = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - meanX;
+    const dy = ys[i] - meanY;
+    num += dx * dy;
+    denX += dx * dx;
+    denY += dy * dy;
+  }
+  if (denX === 0 || denY === 0) return null; // a constant series has no defined correlation
+  return num / Math.sqrt(denX * denY);
+}
+
+function correlationStrength(r) {
+  const abs = Math.abs(r);
+  const strength = abs >= 0.7 ? 'strong' : abs >= 0.4 ? 'moderate' : abs >= 0.2 ? 'weak' : 'negligible';
+  return `${strength} ${r >= 0 ? 'positive' : 'negative'}`;
+}
+
+// Ordinary least-squares fit over the series' point index (0, 1, 2, ...).
+function linearRegression(values) {
+  const n = values.length;
+  const meanX = (n - 1) / 2;
+  const meanY = values.reduce((s, v) => s + v, 0) / n;
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (i - meanX) * (values[i] - meanY);
+    den += (i - meanX) ** 2;
+  }
+  const slope = den === 0 ? 0 : num / den;
+  const intercept = meanY - slope * meanX;
+
+  let ssRes = 0;
+  let ssTot = 0;
+  for (let i = 0; i < n; i++) {
+    const predicted = slope * i + intercept;
+    ssRes += (values[i] - predicted) ** 2;
+    ssTot += (values[i] - meanY) ** 2;
+  }
+  const rSquared = ssTot === 0 ? 1 : 1 - ssRes / ssTot;
+
+  return { slope, intercept, rSquared };
+}
+
+function fitQualityLabel(rSquared) {
+  if (rSquared >= 0.7) return 'high';
+  if (rSquared >= 0.4) return 'moderate';
+  return 'low';
+}
+
+// If the labels look like an arithmetic sequence of numbers (years, indices, ...)
+// continue that sequence; otherwise fall back to generic "Forecast N" labels.
+function deriveFutureLabels(labels, periods) {
+  const n = labels.length;
+  const last = Number(labels[n - 1]);
+  const secondLast = Number(labels[n - 2]);
+  if (n >= 2 && !Number.isNaN(last) && !Number.isNaN(secondLast)) {
+    const step = last - secondLast;
+    return Array.from({ length: periods }, (_, i) => String(last + step * (i + 1)));
+  }
+  return Array.from({ length: periods }, (_, i) => `Forecast ${i + 1}`);
+}
+
 // --- create_chart ------------------------------------------------------------
 
 function generateHueSpread(count, startHue = 0) {
@@ -99,6 +200,13 @@ function getColors(theme, chartType, count) {
   return { bg, border };
 }
 
+function buildForecastOverlay(chartType, labels, datasetsData, names, periods) {
+  const forecast = forecastTrend(labels, datasetsData, names, periods);
+  const futureLabels = forecast.futureLabels;
+
+  return { futureLabels, seriesForecasts: forecast.series };
+}
+
 function buildChart(chartType, labels, series, seriesLabels, options = {}) {
   if (!CHART_TYPES.includes(chartType)) {
     throw new Error(`chartType must be one of: ${CHART_TYPES.join(', ')}`);
@@ -113,7 +221,11 @@ function buildChart(chartType, labels, series, seriesLabels, options = {}) {
   const isXY = chartType === 'bar' || chartType === 'line';
   const datasetsData = isXY ? valuesArray : [valuesArray[0]];
 
-  const datasets = datasetsData.map((values, i) => {
+  if (options.forecastPeriods && !isXY) {
+    throw new Error('forecastPeriods is only supported for bar and line charts');
+  }
+
+  let datasets = datasetsData.map((values, i) => {
     let bg;
     let border;
     if (datasetsData.length === 1) {
@@ -135,9 +247,42 @@ function buildChart(chartType, labels, series, seriesLabels, options = {}) {
     return ds;
   });
 
+  let finalLabels = labels;
+
+  if (options.forecastPeriods) {
+    const { futureLabels, seriesForecasts } = buildForecastOverlay(chartType, labels, datasetsData, names, options.forecastPeriods);
+    finalLabels = [...labels, ...futureLabels];
+
+    datasets = datasets.flatMap((ds, i) => {
+      const historyPad = new Array(options.forecastPeriods).fill(null);
+      const actual = { ...ds, data: [...ds.data, ...historyPad] };
+
+      const projectedValues = seriesForecasts[i].projected.map((p) => p.value);
+      const forecastLeadIn = new Array(Math.max(ds.data.length - 1, 0)).fill(null);
+      const forecastData = [...forecastLeadIn, ds.data[ds.data.length - 1], ...projectedValues];
+
+      const overlay = {
+        label: `${ds.label} (forecast)`,
+        data: forecastData,
+        borderColor: ds.borderColor,
+        backgroundColor: 'transparent',
+        borderDash: [6, 4],
+        borderWidth: 1.5,
+        pointRadius: 2,
+        fill: false,
+        tension: chartType === 'line' ? 0.35 : 0,
+      };
+      // Force the overlay to render as a line even when the base chart is bars,
+      // so the trend projection reads as a dashed line over the bars.
+      if (chartType === 'bar') overlay.type = 'line';
+
+      return [actual, overlay];
+    });
+  }
+
   return {
     type: chartType,
-    data: { labels, datasets },
+    data: { labels: finalLabels, datasets },
     options: {
       plugins: {
         title: options.title ? { display: true, text: options.title } : { display: false },
@@ -166,9 +311,9 @@ function analyzeData(labels, series, seriesLabels) {
   }
   const valuesArray = normalizeSeries(series);
   const names = normalizeSeriesLabels(seriesLabels, valuesArray.length);
+  const numericSeries = valuesArray.map((values) => values.map(Number));
 
-  return valuesArray.map((values, i) => {
-    const nums = values.map(Number);
+  const perSeries = numericSeries.map((nums, i) => {
     const sorted = [...nums].sort((a, b) => a - b);
     const sum = nums.reduce((a, b) => a + b, 0);
     const maxIdx = nums.indexOf(Math.max(...nums));
@@ -186,8 +331,69 @@ function analyzeData(labels, series, seriesLabels) {
       min: { value: nums[minIdx], label: labels[minIdx] },
       trend,
       firstToLastDelta: delta,
+      outliers: detectOutliers(nums, labels),
     };
   });
+
+  const correlations = [];
+  for (let i = 0; i < numericSeries.length; i++) {
+    for (let j = i + 1; j < numericSeries.length; j++) {
+      const r = pearsonCorrelation(numericSeries[i], numericSeries[j]);
+      if (r !== null) {
+        correlations.push({
+          seriesA: names[i],
+          seriesB: names[j],
+          r: Math.round(r * 1000) / 1000,
+          strength: correlationStrength(r),
+        });
+      }
+    }
+  }
+
+  return { series: perSeries, correlations };
+}
+
+// --- forecast_trend ----------------------------------------------------------
+
+function forecastTrend(labels, series, seriesLabels, periods = 3) {
+  if (!Array.isArray(labels) || labels.length < 2) {
+    throw new Error('labels must have at least 2 points to forecast a trend');
+  }
+  if (!Number.isInteger(periods) || periods < 1 || periods > 24) {
+    throw new Error('periods must be an integer between 1 and 24');
+  }
+
+  const valuesArray = normalizeSeries(series);
+  const names = normalizeSeriesLabels(seriesLabels, valuesArray.length);
+  const futureLabels = deriveFutureLabels(labels, periods);
+
+  const seriesForecasts = valuesArray.map((values, i) => {
+    const nums = values.map(Number);
+    if (nums.length < 2) {
+      throw new Error(`Series "${names[i]}" needs at least 2 points to forecast a trend`);
+    }
+    const { slope, intercept, rSquared } = linearRegression(nums);
+    const projected = futureLabels.map((label, idx) => {
+      const x = nums.length + idx;
+      return { label, value: Math.round((slope * x + intercept) * 100) / 100 };
+    });
+
+    return {
+      series: names[i],
+      trend: slope > 0 ? 'increasing' : slope < 0 ? 'decreasing' : 'flat',
+      slopePerPeriod: Math.round(slope * 100) / 100,
+      rSquared: Math.round(rSquared * 1000) / 1000,
+      fitQuality: fitQualityLabel(rSquared),
+      projected,
+    };
+  });
+
+  return {
+    method: 'linear-regression (ordinary least squares over the point index)',
+    periods,
+    futureLabels,
+    series: seriesForecasts,
+  };
 }
 
 module.exports = {
@@ -197,4 +403,5 @@ module.exports = {
   columnsToSeries,
   buildChart,
   analyzeData,
+  forecastTrend,
 };
