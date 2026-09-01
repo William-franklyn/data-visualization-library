@@ -7,7 +7,7 @@ A lightweight JavaScript library to easily create and display various types of c
 - **Manual Data Input:** Generate charts from comma-separated numbers and labels
 - **CSV Import:** Upload CSV files with automatic column selection and header detection
 - **Multi-series Support:** Visualize multiple data columns at once
-- **AI Insights:** AI-powered data analysis (web demo runs on NVIDIA Nemotron via OpenRouter)
+- **AI Insights:** AI-powered data analysis — uses Claude when `ANTHROPIC_API_KEY` is configured, otherwise falls back to a free OpenRouter model
 - **AI Agent (MCP):** The same charting/analysis logic is exposed as an [MCP](https://modelcontextprotocol.io)
   server — Claude Desktop, Claude Code, ChatGPT, or any other MCP-capable client can call it directly. See
   [AI Agent (MCP)](#ai-agent-mcp) below.
@@ -187,8 +187,8 @@ connector; ChatGPT's Apps/Connectors surface also speaks MCP. No install require
 
 | Variable | Required for | Notes |
 |----------|---------------|-------|
-| `OPENROUTER_API_KEY` | `generate_insights` (fallback), the existing web demo's AI Insights panel | Already in use — free-tier OpenRouter models, which is why the git history shows several model swaps chasing rate limits. |
-| `ANTHROPIC_API_KEY` | `generate_insights` (preferred) | If set, `generate_insights` uses Claude (`claude-opus-5`) instead of OpenRouter — more reliable than free-tier models. Not required for the agent to work; only needed if you want this upgrade. |
+| `OPENROUTER_API_KEY` | `generate_insights` (fallback), the web demo's AI Insights panel and CSV column-suggestion (fallback) | Free-tier OpenRouter models — the git history shows several model swaps chasing rate limits, which is why `ANTHROPIC_API_KEY` is recommended instead. |
+| `ANTHROPIC_API_KEY` | `generate_insights` (preferred), the web demo's `/api/ai` proxy (preferred) | If set, **both** the MCP agent and the web demo (`docs/`) answer with Claude (`claude-opus-5`) instead of OpenRouter — same priority, same key, no separate configuration needed for each surface. |
 
 If neither variable is set, `parse_csv`, `create_chart`, and `analyze_data` still work — only
 `generate_insights` will return an error telling you which env var to add.

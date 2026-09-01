@@ -3,9 +3,12 @@
  */
 
 /* ── AI Config ──
-   The API key lives in Vercel → Settings → Environment Variables as OPENROUTER_API_KEY.
-   Never paste the key here — requests go through /api/ai which keeps the key server-side.
-   To change model: https://openrouter.ai/models → filter Free → copy the model ID */
+   Requests go through /api/ai, which keeps the API key server-side and picks the
+   provider for you: if ANTHROPIC_API_KEY is set in Vercel it answers with Claude
+   (claude-opus-5); otherwise it falls back to OpenRouter using AI_MODEL below.
+   AI_MODEL therefore only matters on the OpenRouter fallback path — never paste
+   a key here either way.
+   To change the fallback model: https://openrouter.ai/models → filter Free → copy the model ID */
 const AI_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
 
 async function askAI(prompt) {
