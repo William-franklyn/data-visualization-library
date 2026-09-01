@@ -3,11 +3,30 @@
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { z } = require('zod');
 
-const { CHART_TYPES, parseCsv, buildChart, analyzeData, forecastTrend } = require('./tools.js');
+const { CHART_TYPES, FORECAST_METHODS, HORIZON_UNITS, parseCsv, buildChart, analyzeData, forecastTrend } = require('./tools.js');
 const { renderChartImage } = require('./render.js');
 const { generateInsights } = require('./insights.js');
 
 const seriesSchema = z.union([z.array(z.number()), z.array(z.array(z.number()))]);
+
+const horizonSchema = z
+  .object({
+    value: z.number().positive(),
+    unit: z.enum(HORIZON_UNITS),
+  })
+  .describe(
+    'Predict a real-world time window instead of a fixed point count, e.g. {value:3,unit:"days"} or ' +
+      '{value:6,unit:"hours"}. Requires labels that parse as dates/timestamps (e.g. "2024-01-01", ' +
+      '"2024-01-01T10:00:00Z"), in increasing order — the sampling interval is auto-detected from them.'
+  );
+
+const forecastMethodSchema = z
+  .enum(FORECAST_METHODS)
+  .describe(
+    'auto (default) fits both methods and uses whichever tracked the historical data more closely. ' +
+      'exponential-smoothing (Holt\'s linear method) continuously re-weights toward recent movements — closer ' +
+      'to "learning" a changing trend. linear fits one fixed straight line. Neither models seasonality/cycles.'
+  );
 
 function jsonResult(value) {
   return { content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] };
@@ -46,8 +65,9 @@ function createServer() {
       title: 'Create Chart',
       description:
         'Render a bar, line, doughnut, or polar area chart from labels and one or more numeric data series. ' +
-        'Returns a PNG image plus the underlying Chart.js configuration. For bar/line charts, pass ' +
-        'forecastPeriods to overlay a dashed linear-trend projection for each series.',
+        'Returns a PNG image plus the underlying Chart.js configuration. For bar/line charts, pass either ' +
+        'forecastPeriods (N future points) or forecastHorizon (a real time window, e.g. "next 3 days") to ' +
+        'overlay a dashed trend projection per series — see forecast_trend for the same math without a chart.',
       inputSchema: {
         chartType: z.enum(CHART_TYPES),
         labels: z.array(z.string()).min(1),
@@ -63,12 +83,22 @@ function createServer() {
           .min(1)
           .max(24)
           .optional()
-          .describe('Bar/line charts only. Extends the chart with N future points, projected via linear regression and drawn as a dashed line.'),
+          .describe('Bar/line charts only. Extends the chart with N future points drawn as a dashed line. Ignored if forecastHorizon is set.'),
+        forecastHorizon: horizonSchema.optional(),
+        forecastMethod: forecastMethodSchema.optional(),
       },
     },
-    async ({ chartType, labels, series, seriesLabels, theme, title, xLabel, yLabel, forecastPeriods }) => {
+    async ({ chartType, labels, series, seriesLabels, theme, title, xLabel, yLabel, forecastPeriods, forecastHorizon, forecastMethod }) => {
       try {
-        const config = buildChart(chartType, labels, series, seriesLabels, { theme, title, xLabel, yLabel, forecastPeriods });
+        const config = buildChart(chartType, labels, series, seriesLabels, {
+          theme,
+          title,
+          xLabel,
+          yLabel,
+          forecastPeriods,
+          forecastHorizon,
+          forecastMethod,
+        });
         const image = await renderChartImage(config);
         return {
           content: [
@@ -113,20 +143,30 @@ function createServer() {
     {
       title: 'Forecast Trend',
       description:
-        'Project future values for one or more numeric series using linear regression, without rendering a chart. ' +
-        'Returns per-series slope, trend direction, goodness-of-fit (R²), and the projected values. Best for ' +
-        'roughly linear trends — it will not capture seasonality or cycles. Use create_chart with forecastPeriods ' +
-        'instead if you also want a picture.',
+        'Project future values for one or more numeric series — either N future points, or a real time window ' +
+        '(seconds/minutes/hours/days/weeks/months/years) if the labels are dates/timestamps. Returns per-series ' +
+        'trend direction, slope, goodness-of-fit (R² and MAPE), and the projected values. Adaptive statistical ' +
+        'forecasting (linear regression and/or Holt\'s exponential smoothing) — not a trained ML model, and it ' +
+        'will not capture seasonality/cycles. Use create_chart with the same forecastPeriods/forecastHorizon ' +
+        'options instead if you also want a picture.',
       inputSchema: {
         labels: z.array(z.string()).min(2),
         series: seriesSchema,
         seriesLabels: z.array(z.string()).optional(),
-        periods: z.number().int().min(1).max(24).default(3).describe('How many future points to project.'),
+        periods: z
+          .number()
+          .int()
+          .min(1)
+          .max(24)
+          .default(3)
+          .describe('How many future points to project. Ignored if horizon is set.'),
+        horizon: horizonSchema.optional(),
+        method: forecastMethodSchema.optional(),
       },
     },
-    async ({ labels, series, seriesLabels, periods }) => {
+    async ({ labels, series, seriesLabels, periods, horizon, method }) => {
       try {
-        return jsonResult(forecastTrend(labels, series, seriesLabels, periods));
+        return jsonResult(forecastTrend(labels, series, seriesLabels, { periods, horizon, method }));
       } catch (err) {
         return errorResult(err);
       }

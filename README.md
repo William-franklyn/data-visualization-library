@@ -89,15 +89,41 @@ or any other MCP-capable app — not just clicked through in a browser.
 | Tool | What it does | Needs an API key? |
 |------|--------------|--------------------|
 | `parse_csv` | Parses raw CSV text and suggests a label column + numeric data column(s) | No |
-| `create_chart` | Builds a bar/line/doughnut/polarArea chart and renders it to a PNG (via [QuickChart.io](https://quickchart.io)). Pass `forecastPeriods` to overlay a dashed trend projection. | No |
+| `create_chart` | Builds a bar/line/doughnut/polarArea chart and renders it to a PNG (via [QuickChart.io](https://quickchart.io)). Pass `forecastPeriods` or `forecastHorizon` to overlay a dashed trend projection. | No |
 | `analyze_data` | Deterministic stats — sum, mean, median, min/max, trend, IQR-based outliers per series, and Pearson correlation between every pair of series | No |
-| `forecast_trend` | Linear-regression projection of future values, with slope/trend direction and an R² fit-quality flag, no chart required | No |
+| `forecast_trend` | Projects future values without rendering a chart — trend direction, slope, fit quality, and the projected numbers | No |
 | `generate_insights` | LLM-written analysis or answer to a specific question about the data | Yes |
 
 Only `generate_insights` needs an AI provider — see [Environment variables](#environment-variables).
-Everything else, including the new outlier/correlation/forecast analysis, works with zero
-configuration. Forecasting is a plain linear-trend fit (no seasonality modeling) — the `rSquared`/
-`fitQuality` field tells you how much to trust it on any given series.
+Everything else works with zero configuration.
+
+### Forecasting
+
+`forecast_trend` and `create_chart` share the same forecasting engine, with two ways to specify how
+far ahead to look:
+
+- **`periods` (1–24):** project N more points, continuing the label pattern (e.g. `2024, 2025 →
+  2026, 2027, ...`).
+- **`horizon: { value, unit }`:** project a real time window instead — `unit` is one of `seconds`,
+  `minutes`, `hours`, `days`, `weeks`, `months`, `years` (e.g. "next 3 days", "next 6 hours", "next
+  2 years"). Requires labels that parse as dates/timestamps in increasing order; the sampling
+  interval is auto-detected from them and the horizon is converted to however many points that
+  spans (capped at 365 for chart readability).
+
+Two forecasting methods are available via `method`:
+
+- **`linear`** — a single straight-line trend fit to the whole series.
+- **`exponential-smoothing`** — Holt's linear method, which re-estimates the trend at every point
+  and weights recent movements more heavily than old ones, so it adapts when a series accelerates,
+  decelerates, or shifts level partway through.
+- **`auto`** (default) — fits both and uses whichever tracked the historical data more closely
+  (lower MAPE), reporting both scores under `candidates` so you can see why.
+
+This is adaptive statistical forecasting, not a trained neural network — there's no training step,
+no model weights, and no external inference call, so it runs in milliseconds on whatever data you
+hand it. It also won't capture seasonality or cyclical patterns (a December sales spike, a Monday
+traffic dip); it extrapolates the recent trend. Every forecast reports `rSquared`/`mapePercent`/
+`fitQuality` so you can judge, per series, how much to trust the projection before acting on it.
 
 ### Run it locally (Claude Desktop / Claude Code)
 
