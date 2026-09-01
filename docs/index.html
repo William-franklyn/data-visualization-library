@@ -358,6 +358,20 @@
                     </div>
                 </div>
 
+                <!-- Forecast — bar/line only -->
+                <div class="opt-group" id="grpForecast">
+                    <div class="divider"></div>
+                    <div class="toggle-row">
+                        <span class="toggle-label">Predict Future Trend</span>
+                        <button class="toggle" id="optForecast"></button>
+                    </div>
+                    <div class="field" id="forecastPeriodsField" style="display:none">
+                        <label>Periods To Predict <span class="val-badge" id="forecastPeriodsVal">3</span></label>
+                        <input type="range" id="optForecastPeriods" min="1" max="24" value="3" step="1">
+                    </div>
+                    <div id="forecastInfo" style="display:none;font-size:0.7rem;color:var(--text-muted);margin-top:8px;line-height:1.5"></div>
+                </div>
+
             </div>
         </div>
 

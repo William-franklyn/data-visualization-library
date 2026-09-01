@@ -8,6 +8,9 @@ A lightweight JavaScript library to easily create and display various types of c
 - **CSV Import:** Upload CSV files with automatic column selection and header detection
 - **Multi-series Support:** Visualize multiple data columns at once
 - **AI Insights:** AI-powered data analysis — uses Claude when `ANTHROPIC_API_KEY` is configured, otherwise falls back to a free OpenRouter model
+- **Predict Future Trend:** Bar/line charts can extend N points into the future with a dashed
+  projection (linear regression or Holt's exponential smoothing, whichever fits your data better) —
+  runs entirely client-side, no API key needed
 - **AI Agent (MCP):** The same charting/analysis logic is exposed as an [MCP](https://modelcontextprotocol.io)
   server — Claude Desktop, Claude Code, ChatGPT, or any other MCP-capable client can call it directly. See
   [AI Agent (MCP)](#ai-agent-mcp) below.
@@ -119,6 +122,12 @@ change between them per series (`null` when the previous period summed to zero, 
 change from zero is undefined).
 
 ### Forecasting
+
+> The web demo (`docs/`) has its own **"Predict Future Trend"** toggle in the Chart Options panel
+> for bar/line charts — a plain-JS port of this same linear/exponential-smoothing engine
+> (`docs/script.js`), simplified to periods-only (no time-window horizon or method picker) and
+> running entirely in the browser, no API key or network call involved. The MCP tools below are the
+> full-featured version, for an AI agent to call.
 
 `forecast_trend` and `create_chart` share the same forecasting engine, with two ways to specify how
 far ahead to look:

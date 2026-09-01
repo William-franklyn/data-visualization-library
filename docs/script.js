@@ -61,6 +61,7 @@ window.addEventListener('load', function () {
     let isFullscreen      = false;
     let zoomEnabled       = false;
     let zoomMode          = 'wheel'; // 'wheel' | 'box' | 'pan'
+    let lastForecastSummary = null; // set by buildConfig, read by renderChart
 
     const opts = {
         legend:       true,
@@ -76,6 +77,8 @@ window.addEventListener('load', function () {
         cutout:       '50%',
         yMin:         '',
         yMax:         '',
+        forecast:        false,
+        forecastPeriods: 3,
     };
 
     /* ══════════════════════════════════════════════════
@@ -133,6 +136,111 @@ window.addEventListener('load', function () {
     }
 
     /* ══════════════════════════════════════════════════
+       FORECASTING — plain-JS port of mcp/tools.js's forecast engine
+       (linear regression + Holt's linear exponential smoothing, "auto"
+       picks whichever tracked the historical data more closely). Runs
+       entirely client-side — no API key, no network call.
+    ══════════════════════════════════════════════════ */
+    function linearRegressionFit(values) {
+        const n = values.length;
+        const meanX = (n - 1) / 2;
+        const meanY = values.reduce((a, b) => a + b, 0) / n;
+        let num = 0, den = 0;
+        for (let i = 0; i < n; i++) {
+            num += (i - meanX) * (values[i] - meanY);
+            den += (i - meanX) ** 2;
+        }
+        const slope = den === 0 ? 0 : num / den;
+        return { slope, intercept: meanY - slope * meanX };
+    }
+
+    function rSquaredOf(actual, predicted) {
+        const mean = actual.reduce((a, b) => a + b, 0) / actual.length;
+        let ssRes = 0, ssTot = 0;
+        for (let i = 0; i < actual.length; i++) {
+            ssRes += (actual[i] - predicted[i]) ** 2;
+            ssTot += (actual[i] - mean) ** 2;
+        }
+        return ssTot === 0 ? 1 : 1 - ssRes / ssTot;
+    }
+
+    function mapeOf(actual, predicted) {
+        let sum = 0, count = 0;
+        for (let i = 0; i < actual.length; i++) {
+            if (actual[i] === 0) continue;
+            sum += Math.abs((actual[i] - predicted[i]) / actual[i]);
+            count++;
+        }
+        return count ? sum / count : 0;
+    }
+
+    function linearForecast(values, periods) {
+        const { slope, intercept } = linearRegressionFit(values);
+        const fitted = values.map((_, i) => slope * i + intercept);
+        const projected = Array.from({ length: periods }, (_, i) => slope * (values.length + i) + intercept);
+        return { method: 'linear', slope, rSquared: rSquaredOf(values, fitted), mape: mapeOf(values, fitted), projected };
+    }
+
+    function runHolt(values, alpha, beta) {
+        const n = values.length;
+        const level = new Array(n), trend = new Array(n), fitted = new Array(n - 1);
+        level[0] = values[0];
+        trend[0] = values[1] - values[0];
+        for (let t = 1; t < n; t++) {
+            fitted[t - 1] = level[t - 1] + trend[t - 1];
+            level[t] = alpha * values[t] + (1 - alpha) * (level[t - 1] + trend[t - 1]);
+            trend[t] = beta * (level[t] - level[t - 1]) + (1 - beta) * trend[t - 1];
+        }
+        return { level, trend, fitted };
+    }
+
+    function holtForecast(values, periods) {
+        const grid = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
+        let best = null;
+        for (const alpha of grid) {
+            for (const beta of grid) {
+                const { level, trend, fitted } = runHolt(values, alpha, beta);
+                let sse = 0;
+                for (let i = 0; i < fitted.length; i++) sse += (values[i + 1] - fitted[i]) ** 2;
+                if (!best || sse < best.sse) best = { alpha, beta, level, trend, fitted, sse };
+            }
+        }
+        const actualTail = values.slice(1);
+        const lastLevel = best.level[best.level.length - 1];
+        const lastTrend = best.trend[best.trend.length - 1];
+        const projected = Array.from({ length: periods }, (_, i) => lastLevel + lastTrend * (i + 1));
+        return {
+            method: 'exponential-smoothing',
+            slope: lastTrend,
+            rSquared: rSquaredOf(actualTail, best.fitted),
+            mape: mapeOf(actualTail, best.fitted),
+            projected,
+        };
+    }
+
+    // Below 3 points Holt's smoothing is degenerate (a perfect but meaningless
+    // fit), so always fall back to linear there.
+    function forecastSeries(values, periods) {
+        if (values.length < 3) return linearForecast(values, periods);
+        const linear = linearForecast(values, periods);
+        const holt = holtForecast(values, periods);
+        return holt.mape < linear.mape ? holt : linear;
+    }
+
+    // Continues a numeric label sequence (years, indices, ...) if detected;
+    // otherwise falls back to generic "+1, +2, ..." labels.
+    function deriveForecastLabels(labels, periods) {
+        const n = labels.length;
+        const last = Number(labels[n - 1]);
+        const secondLast = Number(labels[n - 2]);
+        if (n >= 2 && !isNaN(last) && !isNaN(secondLast)) {
+            const step = last - secondLast;
+            return Array.from({ length: periods }, (_, i) => String(Math.round((last + step * (i + 1)) * 100) / 100));
+        }
+        return Array.from({ length: periods }, (_, i) => `+${i + 1}`);
+    }
+
+    /* ══════════════════════════════════════════════════
        BUILD CHART CONFIG
     ══════════════════════════════════════════════════ */
     function buildConfig(chartType, labels, valuesArray, headerLabels) {
@@ -142,7 +250,7 @@ window.addEventListener('load', function () {
         const datasetsData = isXY ? valuesArray : [valuesArray[0]];
         const theme = THEMES[selectedTheme] || THEMES.teal;
 
-        const datasets = datasetsData.map((dataValues, dsIdx) => {
+        let datasets = datasetsData.map((dataValues, dsIdx) => {
             let bg, border;
             if (datasetsData.length === 1) {
                 const c = getColors(chartType, dataValues.length);
@@ -173,6 +281,50 @@ window.addEventListener('load', function () {
             }
             return ds;
         });
+
+        // Forecast overlay — bar/line only, opt-in via the "Predict Future
+        // Trend" toggle. Extends the label axis and adds one dashed
+        // projection dataset per series.
+        let chartLabels = labels;
+        lastForecastSummary = null;
+        if (opts.forecast && isXY) {
+            const periods = opts.forecastPeriods;
+            const futureLabels = deriveForecastLabels(labels, periods);
+            chartLabels = [...labels, ...futureLabels];
+            const summary = [];
+
+            datasets = datasets.flatMap((ds, dsIdx) => {
+                const result = forecastSeries(datasetsData[dsIdx], periods);
+                summary.push({ label: ds.label, method: result.method, rSquared: result.rSquared });
+
+                const historyPad = new Array(periods).fill(null);
+                const actual = { ...ds, data: [...ds.data, ...historyPad] };
+
+                const forecastLeadIn = new Array(Math.max(ds.data.length - 1, 0)).fill(null);
+                const forecastValues = result.projected.map(v => Math.round(v * 100) / 100);
+                const forecastData = [...forecastLeadIn, ds.data[ds.data.length - 1], ...forecastValues];
+
+                const overlay = {
+                    label: `${ds.label} (forecast)`,
+                    data: forecastData,
+                    borderColor: ds.borderColor,
+                    backgroundColor: 'transparent',
+                    borderDash: [6, 4],
+                    borderWidth: 1.5,
+                    pointRadius: 2,
+                    fill: false,
+                    tension: chartType === 'line' ? opts.tension : 0,
+                };
+                // Force the overlay to render as a line even when the base
+                // chart is bars, so the projection reads as a dashed trend
+                // line over the bars.
+                if (chartType === 'bar') overlay.type = 'line';
+
+                return [actual, overlay];
+            });
+
+            lastForecastSummary = summary;
+        }
 
         // Grid color (read CSS var safely)
         let gridColor = '#e0dbd4';
@@ -225,7 +377,7 @@ window.addEventListener('load', function () {
 
         return {
             type: chartType,
-            data: { labels, datasets },
+            data: { labels: chartLabels, datasets },
             options: {
                 indexAxis: (chartType === 'bar' && opts.horizontal) ? 'y' : 'x',
                 responsive: true,
@@ -290,6 +442,7 @@ window.addEventListener('load', function () {
         try {
             myChartInstance = new Chart(canvas.getContext('2d'),
                 buildConfig(selectedType, currentLabels, currentValues, currentHeaders));
+            updateForecastInfo();
         } catch (e) {
             console.error('Chart render error:', e);
             showToast('⚠ Chart error — check console');
@@ -357,6 +510,21 @@ window.addEventListener('load', function () {
         document.getElementById('grpLine').classList.toggle('visible',     type === 'line');
         document.getElementById('grpDoughnut').classList.toggle('visible', type === 'doughnut' || type === 'polarArea');
         document.getElementById('grpAxis').classList.toggle('visible',     type === 'bar' || type === 'line');
+        document.getElementById('grpForecast').classList.toggle('visible', type === 'bar' || type === 'line');
+    }
+
+    function updateForecastInfo() {
+        const el = document.getElementById('forecastInfo');
+        if (!el) return;
+        if (!opts.forecast || !lastForecastSummary || !lastForecastSummary.length) {
+            el.style.display = 'none';
+            el.textContent = '';
+            return;
+        }
+        el.style.display = 'block';
+        el.textContent = lastForecastSummary
+            .map(f => `${f.label}: ${f.method} (R² ${f.rSquared.toFixed(2)})`)
+            .join('  ·  ');
     }
 
     /* ══════════════════════════════════════════════════
@@ -526,6 +694,17 @@ window.addEventListener('load', function () {
     wireRange('optTension',      'tensionVal',      'tension',      v => v / 10,   v => v.toFixed(1));
     wireRange('optPointSize',    'pointSizeVal',    'pointSize',    v => v,         v => v + 'px');
     wireRange('optCutout',       'cutoutVal',       'cutout',       v => v + '%',   v => v);
+    wireRange('optForecastPeriods', 'forecastPeriodsVal', 'forecastPeriods', v => v, v => String(v));
+
+    // Forecast toggle — also shows/hides the periods slider
+    $('optForecast').addEventListener('click', () => {
+        const btn = $('optForecast');
+        btn.classList.toggle('on');
+        opts.forecast = btn.classList.contains('on');
+        $('forecastPeriodsField').style.display = opts.forecast ? 'block' : 'none';
+        if (myChartInstance) renderChart(); // rebuilds config + refreshes forecastInfo
+        else $('forecastInfo').style.display = 'none';
+    });
 
     // Y-axis min/max
     ['optYMin', 'optYMax'].forEach(id => {
@@ -666,6 +845,7 @@ window.addEventListener('load', function () {
         $('columnSelectorPanel').style.display = 'none';
         $('columnList').innerHTML = '';
         $('aiInsightsPanel').style.display = 'none';
+        $('forecastInfo').style.display = 'none';
         currentLabels = []; currentValues = [];
         $('myChart').style.display    = 'none';
         $('emptyState').style.display = '';
