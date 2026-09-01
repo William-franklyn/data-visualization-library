@@ -3,22 +3,21 @@
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { z } = require('zod');
 
-const { CHART_TYPES, FORECAST_METHODS, HORIZON_UNITS, parseCsv, buildChart, analyzeData, forecastTrend } = require('./tools.js');
+const { CHART_TYPES, FORECAST_METHODS, HORIZON_UNITS, parseCsv, buildChart, analyzeData, forecastTrend, comparePeriods } = require('./tools.js');
 const { renderChartImage } = require('./render.js');
 const { generateInsights } = require('./insights.js');
 
 const seriesSchema = z.union([z.array(z.number()), z.array(z.array(z.number()))]);
 
-const horizonSchema = z
-  .object({
-    value: z.number().positive(),
-    unit: z.enum(HORIZON_UNITS),
-  })
-  .describe(
-    'Predict a real-world time window instead of a fixed point count, e.g. {value:3,unit:"days"} or ' +
-      '{value:6,unit:"hours"}. Requires labels that parse as dates/timestamps (e.g. "2024-01-01", ' +
-      '"2024-01-01T10:00:00Z"), in increasing order — the sampling interval is auto-detected from them.'
-  );
+// Shared shape for "a real time window" — used by forecast horizons and by
+// compare_periods' period definition, each with its own description.
+const timeWindowSchema = z.object({ value: z.number().positive(), unit: z.enum(HORIZON_UNITS) });
+
+const horizonSchema = timeWindowSchema.describe(
+  'Predict a real-world time window instead of a fixed point count, e.g. {value:3,unit:"days"} or ' +
+    '{value:6,unit:"hours"}. Requires labels that parse as dates/timestamps (e.g. "2024-01-01", ' +
+    '"2024-01-01T10:00:00Z"), in increasing order — the sampling interval is auto-detected from them.'
+);
 
 const forecastMethodSchema = z
   .enum(FORECAST_METHODS)
@@ -44,15 +43,20 @@ function createServer() {
     {
       title: 'Parse CSV',
       description:
-        'Parse raw CSV text into headers and rows, auto-detect which columns are numeric, and suggest a ' +
-        'label column plus data column(s) to visualize. Use this before create_chart when starting from CSV data.',
+        'Parse raw CSV text into headers and rows, auto-detect which columns are numeric, flag missing/blank ' +
+        'cells per column, and suggest a label column plus data column(s) to visualize. Also returns `extracted` — ' +
+        'ready-to-use {labels, series} for the suggested (or explicitly chosen) columns, with rows that have a ' +
+        'blank value dropped rather than silently coerced to 0 — pass extracted.labels/extracted.series straight ' +
+        'into create_chart/analyze_data/forecast_trend/compare_periods without re-deriving them by hand.',
       inputSchema: {
         csvText: z.string().describe('The full contents of a CSV file, including its header row.'),
+        labelColumn: z.string().optional().describe('Column to use as labels. Defaults to the auto-suggested label column.'),
+        dataColumns: z.array(z.string()).optional().describe('Column(s) to extract as numeric series. Defaults to the auto-suggested numeric columns.'),
       },
     },
-    async ({ csvText }) => {
+    async ({ csvText, labelColumn, dataColumns }) => {
       try {
-        return jsonResult(parseCsv(csvText));
+        return jsonResult(parseCsv(csvText, { labelColumn, dataColumns }));
       } catch (err) {
         return errorResult(err);
       }
@@ -132,6 +136,35 @@ function createServer() {
     async ({ labels, series, seriesLabels }) => {
       try {
         return jsonResult(analyzeData(labels, series, seriesLabels));
+      } catch (err) {
+        return errorResult(err);
+      }
+    }
+  );
+
+  server.registerTool(
+    'compare_periods',
+    {
+      title: 'Compare Periods',
+      description:
+        'Compare the most recent period of data against the period immediately before it — e.g. this week vs ' +
+        'last week, this month vs last month, this quarter vs the prior quarter, or just the last N points vs ' +
+        'the N before that. Reports sum/mean for each period and the % change between them, per series. Define ' +
+        'a period as a fixed point count (periodLength) or a real time window (period: {value, unit}, requires ' +
+        'timestamp-like labels).',
+      inputSchema: {
+        labels: z.array(z.string()).min(2),
+        series: seriesSchema,
+        seriesLabels: z.array(z.string()).optional(),
+        periodLength: z.number().int().min(1).optional().describe('Number of data points that make up one period. Ignored if period is set.'),
+        period: timeWindowSchema
+          .optional()
+          .describe('A real time window that defines one period, e.g. {value:1,unit:"months"} for month-over-month.'),
+      },
+    },
+    async ({ labels, series, seriesLabels, periodLength, period }) => {
+      try {
+        return jsonResult(comparePeriods(labels, series, seriesLabels, { periodLength, period }));
       } catch (err) {
         return errorResult(err);
       }

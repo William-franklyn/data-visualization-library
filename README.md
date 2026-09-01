@@ -88,14 +88,35 @@ or any other MCP-capable app — not just clicked through in a browser.
 
 | Tool | What it does | Needs an API key? |
 |------|--------------|--------------------|
-| `parse_csv` | Parses raw CSV text and suggests a label column + numeric data column(s) | No |
+| `parse_csv` | Parses raw CSV text, auto-detects numeric columns (tolerating a few blank cells), flags missing values per column, and returns ready-to-use `extracted.{labels,series}` for the suggested (or chosen) columns — no hand-transcribing rows | No |
 | `create_chart` | Builds a bar/line/doughnut/polarArea chart and renders it to a PNG (via [QuickChart.io](https://quickchart.io)). Pass `forecastPeriods` or `forecastHorizon` to overlay a dashed trend projection. | No |
 | `analyze_data` | Deterministic stats — sum, mean, median, min/max, trend, IQR-based outliers per series, and Pearson correlation between every pair of series | No |
+| `compare_periods` | Period-over-period comparison — this week vs last week, this month vs last month, or any two equal-length blocks — with sum/mean and % change per series | No |
 | `forecast_trend` | Projects future values without rendering a chart — trend direction, slope, fit quality, and the projected numbers | No |
 | `generate_insights` | LLM-written analysis or answer to a specific question about the data | Yes |
 
 Only `generate_insights` needs an AI provider — see [Environment variables](#environment-variables).
 Everything else works with zero configuration.
+
+### CSV handling
+
+`parse_csv` no longer disqualifies a whole column from "numeric" just because a few cells are
+blank — it reports `missingCounts` per column instead. Its `extracted` field does the row→series
+extraction for you (using the suggested columns, or `labelColumn`/`dataColumns` if you pass them):
+rows with a blank label or a blank/non-numeric value in a selected data column are dropped rather
+than silently coerced to `0`, with `extracted.droppedRowCount` telling you how many. Feed
+`extracted.labels` / `extracted.series` / `extracted.seriesLabels` straight into `create_chart`,
+`analyze_data`, `compare_periods`, or `forecast_trend`.
+
+### Period comparison
+
+`compare_periods` compares the most recent period of data against the period right before it —
+"this week vs last week," "this quarter vs last quarter," or just the last N points vs the N
+before that. Like forecasting, a period is defined either as a fixed point count (`periodLength`)
+or a real time window (`period: {value, unit}`) when the labels are dates/timestamps, using the
+same interval auto-detection as `forecastHorizon`. Reports sum/mean for each period and the %
+change between them per series (`null` when the previous period summed to zero, since a percentage
+change from zero is undefined).
 
 ### Forecasting
 

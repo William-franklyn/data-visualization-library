@@ -40,7 +40,12 @@ function round3(x) {
 
 // --- parse_csv -------------------------------------------------------------
 
-function parseCsv(csvText, { maxRows = 1000, maxSampleRows = 5 } = {}) {
+function isBlank(v) {
+  return v === '' || v === null || v === undefined;
+}
+
+function parseCsv(csvText, options = {}) {
+  const { maxRows = 1000, maxSampleRows = 5, labelColumn, dataColumns } = options;
   if (typeof csvText !== 'string' || !csvText.trim()) {
     throw new Error('csvText must be a non-empty string');
   }
@@ -57,13 +62,35 @@ function parseCsv(csvText, { maxRows = 1000, maxSampleRows = 5 } = {}) {
   const rows = result.data.slice(0, maxRows);
   if (!rows.length) throw new Error('CSV has no data rows');
 
-  const numericColumns = headers.filter((h) =>
-    rows.every((r) => r[h] !== '' && r[h] != null && !isNaN(Number(r[h])))
-  );
+  // A column counts as numeric if every *non-blank* value in it parses as a
+  // number — a handful of missing cells shouldn't disqualify an otherwise
+  // numeric column. Missing cells are reported separately instead.
+  const missingCounts = {};
+  const numericColumns = headers.filter((h) => {
+    let missing = 0;
+    let numericNonBlank = 0;
+    let nonBlank = 0;
+    for (const r of rows) {
+      if (isBlank(r[h])) {
+        missing += 1;
+        continue;
+      }
+      nonBlank += 1;
+      if (!isNaN(Number(r[h]))) numericNonBlank += 1;
+    }
+    missingCounts[h] = missing;
+    return nonBlank > 0 && numericNonBlank === nonBlank;
+  });
 
   const nonNumeric = headers.filter((h) => !numericColumns.includes(h));
   const suggestedLabelColumn = nonNumeric[0] || headers[0];
   const suggestedDataColumns = numericColumns.length ? numericColumns : headers.slice(1, 2);
+
+  const finalLabelColumn = labelColumn && headers.includes(labelColumn) ? labelColumn : suggestedLabelColumn;
+  const requestedDataColumns = Array.isArray(dataColumns) ? dataColumns.filter((c) => headers.includes(c)) : [];
+  const finalDataColumns = requestedDataColumns.length ? requestedDataColumns : suggestedDataColumns;
+
+  const extracted = columnsToSeries(rows, finalLabelColumn, finalDataColumns);
 
   return {
     headers,
@@ -71,16 +98,47 @@ function parseCsv(csvText, { maxRows = 1000, maxSampleRows = 5 } = {}) {
     truncated: result.data.length > rows.length,
     sampleRows: rows.slice(0, maxSampleRows),
     numericColumns,
+    missingCounts,
+    hasMissingValues: Object.values(missingCounts).some((c) => c > 0),
     suggestedLabelColumn,
     suggestedDataColumns,
     rows,
+    // Ready-to-use {labels, series} for the suggested (or requested)
+    // columns, so a caller doesn't have to hand-transcribe rows itself.
+    extracted,
   };
 }
 
+// Rows with a blank label, or a blank/non-numeric value in any requested data
+// column, are dropped rather than silently coerced to 0 — droppedRowCount
+// reports how many that was.
 function columnsToSeries(rows, labelColumn, dataColumns) {
-  const labels = rows.map((r) => String(r[labelColumn] ?? 'Data'));
-  const series = dataColumns.map((col) => rows.map((r) => Number(r[col])));
-  return { labels, series, seriesLabels: dataColumns };
+  const labels = [];
+  const series = dataColumns.map(() => []);
+  let droppedRowCount = 0;
+
+  for (const r of rows) {
+    const labelVal = r[labelColumn];
+    if (isBlank(labelVal)) {
+      droppedRowCount += 1;
+      continue;
+    }
+
+    const values = dataColumns.map((col) => {
+      const raw = r[col];
+      if (isBlank(raw) || isNaN(Number(raw))) return null;
+      return Number(raw);
+    });
+    if (values.some((v) => v === null)) {
+      droppedRowCount += 1;
+      continue;
+    }
+
+    labels.push(String(labelVal));
+    values.forEach((v, i) => series[i].push(v));
+  }
+
+  return { labelColumn, dataColumns, labels, series, seriesLabels: dataColumns, droppedRowCount };
 }
 
 // --- shared stats helpers ----------------------------------------------------
@@ -580,6 +638,87 @@ function forecastTrend(labels, series, seriesLabels, options = {}) {
   };
 }
 
+// --- compare_periods ----------------------------------------------------------
+
+function resolvePeriodLength(period, labels) {
+  if (!HORIZON_UNITS.includes(period.unit)) {
+    throw new Error(`period.unit must be one of: ${HORIZON_UNITS.join(', ')}`);
+  }
+  if (!(period.value > 0)) throw new Error('period.value must be a positive number');
+
+  const timeSeries = detectTimeSeries(labels);
+  if (!timeSeries) {
+    throw new Error(
+      'period requires labels that parse as dates/timestamps (e.g. "2024-01-01"), in increasing order — use periodLength instead for non-date labels'
+    );
+  }
+  const totalMs = period.value * UNIT_MS[period.unit];
+  return Math.max(1, Math.round(totalMs / timeSeries.medianDeltaMs));
+}
+
+function summarizeBlock(blockLabels, values) {
+  const sum = values.reduce((a, b) => a + b, 0);
+  return {
+    from: blockLabels[0],
+    to: blockLabels[blockLabels.length - 1],
+    count: values.length,
+    sum: round2(sum),
+    mean: round2(sum / values.length),
+  };
+}
+
+// Percentage change is undefined when the baseline is zero — null signals
+// "can't be expressed as a percent" rather than a misleading Infinity/0.
+function percentChange(from, to) {
+  if (from === 0) return null;
+  return round2(((to - from) / Math.abs(from)) * 100);
+}
+
+function comparePeriods(labels, series, seriesLabels, options = {}) {
+  if (!Array.isArray(labels) || labels.length < 2) {
+    throw new Error('labels must have at least 2 points');
+  }
+
+  const periodLength = options.period ? resolvePeriodLength(options.period, labels) : options.periodLength;
+  if (!Number.isInteger(periodLength) || periodLength < 1) {
+    throw new Error('Provide either periodLength (integer point count) or period ({value, unit}) to define what one period spans');
+  }
+  if (labels.length < periodLength * 2) {
+    throw new Error(
+      `Need at least ${periodLength * 2} data points to compare two full periods of length ${periodLength} (got ${labels.length})`
+    );
+  }
+
+  const valuesArray = normalizeSeries(series);
+  const names = normalizeSeriesLabels(seriesLabels, valuesArray.length);
+
+  const currentLabels = labels.slice(labels.length - periodLength);
+  const previousLabels = labels.slice(labels.length - periodLength * 2, labels.length - periodLength);
+
+  const seriesComparisons = valuesArray.map((values, i) => {
+    const nums = values.map(Number);
+    const currentValues = nums.slice(nums.length - periodLength);
+    const previousValues = nums.slice(nums.length - periodLength * 2, nums.length - periodLength);
+    const current = summarizeBlock(currentLabels, currentValues);
+    const previous = summarizeBlock(previousLabels, previousValues);
+
+    return {
+      series: names[i],
+      current,
+      previous,
+      change: {
+        absoluteSum: round2(current.sum - previous.sum),
+        sumChangePercent: percentChange(previous.sum, current.sum),
+        absoluteMean: round2(current.mean - previous.mean),
+        meanChangePercent: percentChange(previous.mean, current.mean),
+      },
+      direction: current.sum > previous.sum ? 'up' : current.sum < previous.sum ? 'down' : 'flat',
+    };
+  });
+
+  return { periodLength, series: seriesComparisons };
+}
+
 module.exports = {
   CHART_TYPES,
   FORECAST_METHODS,
@@ -590,4 +729,5 @@ module.exports = {
   buildChart,
   analyzeData,
   forecastTrend,
+  comparePeriods,
 };
